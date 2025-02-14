@@ -1,0 +1,11 @@
+## MSCV generated files and specific folder
+
+.build/
+*.exe
+*.ilk
+*.pdb
+*.obj
+
+## User configuration files (VSCode)
+
+.vscode/
