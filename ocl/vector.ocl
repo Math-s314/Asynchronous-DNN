@@ -1,0 +1,44 @@
+#pragma OPENCL EXTENSION cl_khr_int64_base_atomics:enable
+#pragma OPENCL EXTENSION cl_khr_int64_extended_atomics:enable
+
+union floatCaster {
+  unsigned int intVal;
+  float floatVal;
+};
+
+inline void atomic_float_add(volatile __global float *source, const float operand) {
+  union floatCaster prevVal;
+  union floatCaster newVal;
+
+  do {
+    prevVal.floatVal = *source;
+    newVal.floatVal = prevVal.floatVal + operand;
+  } while (atomic_cmpxchg((volatile __global unsigned int *)source, prevVal.intVal, newVal.intVal) != prevVal.intVal);
+}
+
+inline void atomic_float_mul(volatile __global float *source, const float operand) {
+  union floatCaster prevVal;
+  union floatCaster newVal;
+
+  do {
+    prevVal.floatVal = *source;
+    newVal.floatVal = prevVal.floatVal * operand;
+  } while (atomic_cmpxchg((volatile __global unsigned int *)source, prevVal.intVal, newVal.intVal) != prevVal.intVal);
+}
+
+inline void atomic_float_div(volatile __global float *source, const float operand) {
+  union floatCaster prevVal;
+  union floatCaster newVal;
+
+  do {
+    prevVal.floatVal = *source;
+    newVal.floatVal = prevVal.floatVal / operand;
+  } while (atomic_cmpxchg((volatile __global unsigned int *)source, prevVal.intVal, newVal.intVal) != prevVal.intVal);
+}
+
+/*_______________________________________*/
+
+kernel void vector_product(global float *v, global float *u, global float *r) {
+  int index = get_global_id(0);
+  atomic_float_add(r, u[index] * v[index]);
+}

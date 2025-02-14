@@ -1,0 +1,105 @@
+/// Set of OpenCL kernels for the DNN::Matrix class
+/// Each operation must be usable if one or both arguments are transposed (the result can be transposed too).
+/// Especially it is recommend to abuse of the fact that the transposition is an involution.
+
+kernel void matrix_addition(global float *A, global float *B, global float *R) {
+  const int N = get_global_size(1);
+  const int i = get_global_id(0);
+  const int j = get_global_id(1);
+
+  R[i*N+j] = A[i*N+j] + B[i*N+j];
+}
+
+kernel void matrix_transAddition(global float *A, global float *transB, global float *R) {
+  const int N = get_global_size(1);
+  const int i = get_global_id(0);
+  const int j = get_global_id(1);
+
+  R[i*N+j] = A[i*N+j] + transB[j*N+i];
+}
+
+kernel void matrix_substraction(global float *A, global float *B, global float *R) {
+  const int N = get_global_size(1);
+  const int i = get_global_id(0);
+  const int j = get_global_id(1);
+
+  R[i*N+j] = A[i*N+j] - B[i*N+j];
+}
+
+kernel void matrix_transSubstraction(global float *A, global float *transB, global float *R) {
+  const int N = get_global_size(1);
+  const int i = get_global_id(0);
+  const int j = get_global_id(1);
+
+  R[i*N+j] = A[i*N+j] - transB[j*N+i];
+}
+
+kernel void matrix_product(global float *A, global float *B, global float *R, const int M) {
+  const int N = get_global_size(1);
+  const int i = get_global_id(0);
+  const int j = get_global_id(1);
+  float tmp = 0.f;
+  
+  for(int k=0; k<N; ++k)
+    tmp += A[i*M+k] * B[k*N+j];
+
+  R[i*N+j] = tmp;
+}
+
+kernel void matrix_transLProduct(global float *A, global float *transB, global float *R, const int M) {
+  const int N = get_global_size(1);
+  const int i = get_global_id(0);
+  const int j = get_global_id(1);
+  float tmp = 0.f;
+  
+  for(int k=0; k<N; ++k)
+    tmp += A[i*M+k] * transB[j*M+k];
+
+  R[i*N+j] = tmp;
+}
+
+kernel void matrix_transRProduct(global float *transA, global float *B, global float *R, const int _M) { //Here _M is useless, its only purpose is to kee the same signature...
+  const int M = get_global_size(0);
+  const int N = get_global_size(1);
+  const int i = get_global_id(0);
+  const int j = get_global_id(1);
+  float tmp = 0.f;
+  
+  for(int k=0; k<N; ++k)
+    tmp += transA[k*M+i] * B[k*N+j];
+
+  R[i*N+j] = tmp;
+}
+
+kernel void matrix_hadamardProduct(global float *A, global float *B, global float *R) {
+  const int N = get_global_size(1);
+  const int i = get_global_id(0);
+  const int j = get_global_id(1);
+
+  R[i*N+j] = A[i*N+j] * B[i*N+j];
+}
+
+kernel void matrix_transHadamardProduct(global float *A, global float *transB, global float *R) {
+  const int N = get_global_size(1);
+  const int i = get_global_id(0);
+  const int j = get_global_id(1);
+
+  R[i*N+j] = A[i*N+j] * transB[j*N+i];
+}
+
+kernel void matrix_opposite(global float *A, global float *R) {
+  const int N = get_global_size(1);
+  const int i = get_global_id(0);
+  const int j = get_global_id(1);
+
+  R[i*N+j] = -A[i*N+j];
+}
+
+kernel void scalar_matrix_product(const float lambda, global float *A, global float *R) {
+  const int N = get_global_size(1);
+  const int i = get_global_id(0);
+  const int j = get_global_id(1);
+
+  R[i*N+j] = lambda * A[i*N+j];
+}
+
