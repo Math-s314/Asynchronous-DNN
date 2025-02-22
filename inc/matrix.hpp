@@ -93,6 +93,9 @@ namespace DNN {
 
     //ENH : Add mutable and in link to what is seen by the user...
     //ENH : Replace assert by exception
+    //TODO : Check every usage of rows/columns, it should be real dimension of the matrix
+    //TODO : Check every usage of get...
+    //TODO : avoid assert in private methods and maybe also for protected nah ? 
     class Matrix {
     public:
         //Host side creation
@@ -103,13 +106,13 @@ namespace DNN {
         //Affectation creation (behaves smartly...)
         Matrix(Matrix  &toCopy);
         Matrix(Matrix &&toMove) noexcept;
-        ~Matrix();
+        virtual ~Matrix();
 
         Matrix &operator=(Matrix &toCopy);
         Matrix &operator=(Matrix &&toMove) noexcept;
 
-        //Operations' library
-        Matrix operator+(Matrix &operand);//ENH : Add rvalue version ?
+        //Operations' public library (we don't want them to be virtual : adapted return type)
+        Matrix operator+(Matrix &operand); //ENH : Add rvalue version ?
         Matrix operator-(Matrix &operand);
         Matrix operator*(Matrix &operand);
         
@@ -123,9 +126,9 @@ namespace DNN {
 
         Matrix executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel);
 
-        //Data access
-        inline int getRowCount()    const {return transpose ? columns : rows; }
-        inline int getColumnCount() const {return transpose ? rows : columns; }
+        //Data access (we dont want them to be virtual : adapted return type and parameters)
+        virtual inline int getRowCount()    const {return transpose ? columns : rows; }
+        virtual inline int getColumnCount() const {return transpose ? rows : columns; }
 
         inline RowAccesser operator[](cl::size_type row) { return RowAccesser(row, *this); }
         float &getLValueElement(cl::size_type row, cl::size_type col);
@@ -148,10 +151,15 @@ namespace DNN {
         static CLMatrixSetup *defaultCLSetup; 
                 
     protected:
-        //Device side creation
-        Matrix(int nbRow, int nbCol, cl::Buffer *existingBuffer);
+        //Operations' library (to allow any derived type as return without copy)
+        static void opAdd(Matrix &A, Matrix &B, Matrix &R);
+        static void opSub(Matrix &A, Matrix &B, Matrix &R);
+        static void opMul(Matrix &A, Matrix &B, Matrix &R);
+        static void opOpp(Matrix &A, Matrix &R);
 
         //Automatic data management
+        Matrix(int nbRow, int nbCol, cl::Buffer *existingBuffer);  //Internal device side creation
+        Matrix(int nbRow, int nbCol, cl::vector<float> *existingVector);  //Internal host side creation (for derived classes)
         void mangageBeforeComputation(cl::vector<cl::Event> &requiredEvents);
 
         void waitForExternal();
@@ -163,9 +171,10 @@ namespace DNN {
         void downloadData();
         void uploadData();
 
-        const int rows;
-        const int columns;
         bool transpose = false;
+        int rows    = 0;
+        int columns = 0;
+        
         CLMatrixSetup *CLSetup = defaultCLSetup; //ENH : Risky nah ? How should it behave on copy ??
 
         //OpenCL Callbacks
