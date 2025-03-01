@@ -143,7 +143,7 @@ DNN::Matrix::Matrix(Matrix &&toMove) noexcept  : rows(toMove.rows), columns(toMo
 
 DNN::Matrix::~Matrix() {
     std::cout << "Destroy Matrix !!" << std::endl;
-    if(data == nullptr) return; //ENH : What if both TS are just nullptr : leak...
+    if(data == nullptr) return;
 
     data->registerForDeletion(); //Ensure that no thread own any of the matrix's mutexs.
 
@@ -182,7 +182,9 @@ DNN::Matrix &DNN::Matrix::operator=(Matrix &toCopy) {
         TS_stateFlags |= StateFlags::DATA_UPLOADED;
     }
     else if (toCopy.TS_stateFlags & StateFlags::DATA_DOWNLOADED) {
-        toCopy.promptStateMutex.unlock(); //Mimic computation from now...
+        toCopy.promptStateMutex.unlock(); 
+        
+        /// Mimic computation from now...
 
         data->TS_buffer =  new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns);
         TS_stateFlags |= StateFlags::COMPUTATION_EXECUTING | StateFlags::DATA_DOWNLOADED;
@@ -449,40 +451,10 @@ void DNN::Matrix::setCLSetup(std::shared_ptr<CLMatrixSetup> newSetup) {
 
 // ENH : Should result matrix be checked ??
 void DNN::Matrix::opAdd(Matrix &A, Matrix &B, Matrix &R) {
-    assert(A.isValid() && B.isValid());
     assert(A.getRowCount() == B.getRowCount() && A.getColumnCount() == B.getColumnCount());
 
-    //Prepare result and transposition (no need for TS behavior, see constructors)
     CLMatrixSetup::AddKerType kernel((A.transpose == B.transpose) ? A.CLSetup->getKernel("matrix_addition") : A.CLSetup->getKernel("matrix_transAddition"));
-
-    R.TS_stateFlags |= StateFlags::COMPUTATION_EXECUTING;
-    R.transpose = A.transpose;
-    R.rows      = A.rows;
-    R.columns   = A.columns;
-    R.data->addBufferEvent();
-
-    //Prepare operands
-    cl::vector<cl::Event> events;
-    events.reserve(2);
-    A.mangageBeforeComputation(events); //WARNING : It locks the promptMutex !!!!
-    B.mangageBeforeComputation(events);
-
-    //Actual computations...
-    std::lock_guard<std::recursive_mutex> lockRes(R.promptStateMutex);
-    R.TS_lastComputationEvent = kernel( //Here the previous cl_event will be correctly released...
-        cl::EnqueueArgs(A.CLSetup->getQueue(), events, cl::NDRange(R.rows, R.columns)),
-        *A.data->TS_buffer,
-        *B.data->TS_buffer,
-        *R.data->TS_buffer
-    );
-
-    //Callbacks
-    addDataCallbackTo(R.TS_lastComputationEvent, readCallback, A.data);
-    addDataCallbackTo(R.TS_lastComputationEvent, readCallback, B.data);
-    addDataCallbackTo(R.TS_lastComputationEvent, computationCallback, R.data);
-
-    A.promptStateMutex.unlock();
-    B.promptStateMutex.unlock();
+    basicBinaryOp(A, B, R, A.transpose, A.rows, A.columns, kernel);
 }
 
 void DNN::Matrix::opSub(Matrix &A, Matrix &B, Matrix &R) {
@@ -492,34 +464,7 @@ void DNN::Matrix::opSub(Matrix &A, Matrix &B, Matrix &R) {
     //Prepare result and transposition (no need for TS behavior, see constructors)
     CLMatrixSetup::SubKerType kernel((A.transpose == B.transpose) ? A.CLSetup->getKernel("matrix_substraction") : A.CLSetup->getKernel("matrix_transSubstraction"));
 
-    R.TS_stateFlags |= StateFlags::COMPUTATION_EXECUTING;
-    R.transpose = A.transpose;
-    R.rows      = A.rows;
-    R.columns   = A.columns;
-    R.data->addBufferEvent();
-
-    //Prepare operands
-    cl::vector<cl::Event> events;
-    events.reserve(2);
-    A.mangageBeforeComputation(events);  //WARNING : It locks the promptMutex !!!!
-    B.mangageBeforeComputation(events);
-
-    //Actual computations...
-    std::lock_guard<std::recursive_mutex> lockRes(R.promptStateMutex);
-    R.TS_lastComputationEvent = kernel( //Here the previous cl_event will be correctly released...
-        cl::EnqueueArgs(A.CLSetup->getQueue(), events, cl::NDRange(R.rows, R.columns)),
-        *A.data->TS_buffer,
-        *B.data->TS_buffer,
-        *R.data->TS_buffer
-    );
-
-    //Callbacks
-    addDataCallbackTo(R.TS_lastComputationEvent, readCallback, A.data);
-    addDataCallbackTo(R.TS_lastComputationEvent, readCallback, B.data);
-    addDataCallbackTo(R.TS_lastComputationEvent, computationCallback, R.data);
-
-    A.promptStateMutex.unlock();
-    B.promptStateMutex.unlock();
+    basicBinaryOp(A, B, R, A.transpose, A.rows, A.columns, kernel);
 }
 
 void DNN::Matrix::opMul(Matrix &A, Matrix &B, Matrix &R) {
@@ -531,67 +476,20 @@ void DNN::Matrix::opMul(Matrix &A, Matrix &B, Matrix &R) {
         A.CLSetup->getKernel("matrix_product") : 
         A.transpose ? A.CLSetup->getKernel("matrix_transLProduct") : A.CLSetup->getKernel("matrix_transRProduct")
     );
+    R.transpose = A.transpose && B.transpose; //Avoids creating an useless variable...
 
-    R.TS_stateFlags |= StateFlags::COMPUTATION_EXECUTING;
-    R.transpose = A.transpose && B.transpose;
-    R.rows      = R.transpose ? B.getColumnCount() : A.getRowCount();
-    R.columns   = R.transpose ? A.getRowCount() : B.getColumnCount();
-    R.data->addBufferEvent();
-
-    //Prepare operands
-    cl::vector<cl::Event> events;
-    events.reserve(2);
-    A.mangageBeforeComputation(events); //WARNING : It locks the promptMutex !!!!
-    B.mangageBeforeComputation(events);
-
-    //Actual computations...
-    std::lock_guard<std::recursive_mutex> lockRes(R.promptStateMutex);
-    R.TS_lastComputationEvent = kernel( //Here the previous cl_event will be correctly released...
-        cl::EnqueueArgs(A.CLSetup->getQueue(), events, cl::NDRange(R.rows, R.columns)),
-        R.transpose ? *B.data->TS_buffer : *A.data->TS_buffer,
-        R.transpose ? *A.data->TS_buffer : *B.data->TS_buffer,
-        *R.data->TS_buffer,
-        A.getColumnCount()
+    basicBinaryOp(A, B, R, R.transpose,
+        R.transpose ? B.getColumnCount() : A.getRowCount(), 
+        R.transpose ? A.getRowCount() : B.getColumnCount(), 
+        kernel, A.getColumnCount()
     );
-
-    //Callbacks
-    addDataCallbackTo(R.TS_lastComputationEvent, readCallback, A.data);
-    addDataCallbackTo(R.TS_lastComputationEvent, readCallback, B.data);
-    addDataCallbackTo(R.TS_lastComputationEvent, computationCallback, R.data);
-
-    A.promptStateMutex.unlock();
-    B.promptStateMutex.unlock();
 }
 
 void DNN::Matrix::opOpp(Matrix &A, Matrix &R) {
-    assert(A.isValid());
-
     //Prepare result (no need for TS behavior, see constructors)
     CLMatrixSetup::OppKerType kernel(A.CLSetup->getKernel("matrix_opposite"));
-    R.TS_stateFlags |= StateFlags::COMPUTATION_EXECUTING;
-    R.transpose = A.transpose;
-    R.rows      = A.rows;
-    R.columns   = A.columns;
-    R.data->addBufferEvent();
 
-    //Prepare operands
-    cl::vector<cl::Event> events;
-    events.reserve(2);
-    A.mangageBeforeComputation(events); //WARNING : It locks the promptMutex !!!!
-
-    //Actual computations...
-    std::lock_guard<std::recursive_mutex> lockRes(R.promptStateMutex);
-    R.TS_lastComputationEvent = kernel( //Here the previous cl_event will be correctly released...
-        cl::EnqueueArgs(A.CLSetup->getQueue(), events, cl::NDRange(R.rows, R.columns)),
-        *A.data->TS_buffer,
-        *R.data->TS_buffer
-    );
-
-    //Callbacks
-    addDataCallbackTo(R.TS_lastComputationEvent, readCallback, A.data);
-    addDataCallbackTo(R.TS_lastComputationEvent, computationCallback, R.data);
-
-    A.promptStateMutex.unlock();
+    basicUnaryOp(A, R, A.transpose, A.rows, A.columns, kernel);
 }
 
 DNN::Matrix::Matrix(int nbRow, int nbCol, cl::Buffer *existingBuffer, std::shared_ptr<CLMatrixSetup> setup) : rows(nbRow), columns(nbCol),

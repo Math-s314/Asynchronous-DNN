@@ -57,11 +57,10 @@ namespace DNN {
     };
 
     //ENH : Make prepare string constexpr
-    //ENH : A big think about how is organised the CL setup must be done...
     class VectorisedFunction {
         public:
             VectorisedFunction() = delete;
-            VectorisedFunction(const cl::string &operation, std::weak_ptr<CLMatrixSetup> setup); //BUG : How to handle this pointer
+            VectorisedFunction(const cl::string &operation, std::weak_ptr<CLMatrixSetup> setup);
 
             Matrix operator()(Matrix &arg);
             static cl::string prepareString(const cl::string &operation);
@@ -108,8 +107,6 @@ namespace DNN {
     //ENH : Add mutable and in link to what is seen by the user...
     //ENH : Replace assert by exception
     //ENH : avoid assert in private methods and maybe also for protected nah ?
-    //TODO : Check every usage of rows/columns in operators static
-    //BUG : Matrix result of a computation have a possibly different CLSetup !!!
     class Matrix {
     public:
         //Host side creation
@@ -169,6 +166,11 @@ namespace DNN {
         static void opSub(Matrix &A, Matrix &B, Matrix &R);
         static void opMul(Matrix &A, Matrix &B, Matrix &R);
         static void opOpp(Matrix &A, Matrix &R);
+
+        template<typename... Ts>
+        static void basicUnaryOp(Matrix &A, Matrix &R, bool transpose, int rows, int columns, cl::KernelFunctor<cl::Buffer &, cl::Buffer &, Ts...> &kernel, Ts... args);
+        template<typename... Ts>
+        static void basicBinaryOp(Matrix &A, Matrix &B, Matrix &R, bool transpose, int rows, int columns, cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &, Ts...> &kernel, Ts... args);
 
         //Automatic data management
         Matrix(int nbRow, int nbCol, cl::Buffer *existingBuffer       , std::shared_ptr<CLMatrixSetup> setup);  //Internal device side creation
@@ -252,9 +254,76 @@ namespace DNN {
         friend class Vector;
     };
 
-
     //Other operators for the Matrix class
     std::ostream &operator<<(std::ostream &output, DNN::Matrix &matrix);
     // Matrix operator*(float scalar, Matrix &operand);
-};
 
+    //Templates' definition
+    template <typename... Ts>
+    inline void Matrix::basicUnaryOp(Matrix &A, Matrix &R, bool transpose, int rows, int columns, cl::KernelFunctor<cl::Buffer &, cl::Buffer &, Ts...> &kernel, Ts... args) {
+        assert(A.isValid());
+
+        R.TS_stateFlags &= oppFlag(StateFlags::DATA_UPLOADED);
+        R.TS_stateFlags |= StateFlags::COMPUTATION_EXECUTING | StateFlags::DATA_DOWNLOADED;
+        R.transpose = transpose;
+        R.rows      = rows;
+        R.columns   = columns;
+        R.data->addBufferEvent();
+
+        //Prepare operands
+        cl::vector<cl::Event> events;
+        events.reserve(2);
+        A.mangageBeforeComputation(events); //WARNING : It locks the promptMutex !!!!
+
+        //Actual computations...
+        std::lock_guard<std::recursive_mutex> lockRes(R.promptStateMutex);
+        R.TS_lastComputationEvent = kernel( //Here the previous cl_event will be correctly released...
+            cl::EnqueueArgs(A.CLSetup->getQueue(), events, cl::NDRange(R.rows, R.columns)),
+            *A.data->TS_buffer,
+            *R.data->TS_buffer,
+            args...
+        );
+
+        //Callbacks
+        addDataCallbackTo(R.TS_lastComputationEvent, readCallback, A.data);
+        addDataCallbackTo(R.TS_lastComputationEvent, computationCallback, R.data);
+
+        A.promptStateMutex.unlock();
+    }
+
+    template <typename... Ts>
+    inline void Matrix::basicBinaryOp(Matrix &A, Matrix &B, Matrix &R, bool transpose, int rows, int columns, cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &, Ts...> &kernel, Ts... args) {
+        assert(A.isValid() && B.isValid());
+
+        R.TS_stateFlags &= oppFlag(StateFlags::DATA_UPLOADED);
+        R.TS_stateFlags |= StateFlags::COMPUTATION_EXECUTING | StateFlags::DATA_DOWNLOADED;
+        R.transpose = transpose;
+        R.rows      = rows;
+        R.columns   = columns;
+        R.data->addBufferEvent();
+
+        //Prepare operands
+        cl::vector<cl::Event> events;
+        events.reserve(2);
+        A.mangageBeforeComputation(events); //WARNING : It locks the promptMutex !!!!
+        B.mangageBeforeComputation(events);
+
+        //Actual computations...
+        std::lock_guard<std::recursive_mutex> lockRes(R.promptStateMutex);
+        R.TS_lastComputationEvent = kernel( //Here the previous cl_event will be correctly released...
+            cl::EnqueueArgs(A.CLSetup->getQueue(), events, cl::NDRange(R.rows, R.columns)),
+            *A.data->TS_buffer,
+            *B.data->TS_buffer,
+            *R.data->TS_buffer,
+            args...
+        );
+
+        //Callbacks
+        addDataCallbackTo(R.TS_lastComputationEvent, readCallback, A.data);
+        addDataCallbackTo(R.TS_lastComputationEvent, readCallback, B.data);
+        addDataCallbackTo(R.TS_lastComputationEvent, computationCallback, R.data);
+
+        A.promptStateMutex.unlock();
+        B.promptStateMutex.unlock();
+    }
+};

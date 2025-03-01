@@ -30,7 +30,7 @@ namespace DNN {
         Vector operator-(Vector &operand);
         Vector operator-();
 
-        Matrix addOverMatrix(Matrix &operand); //TODO : Need specific kernel (and the corresponding transpose...)
+        Matrix addOverMatrix(Matrix &operand);
         Matrix subOverMatrix(Matrix &operand); 
 
         //Data access
