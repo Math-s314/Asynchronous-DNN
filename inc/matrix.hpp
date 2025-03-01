@@ -10,6 +10,7 @@
 #include <atomic>
 #include <iostream>
 #include <iomanip>
+#include <unordered_map>
 
 namespace DNN {
     class Matrix;
@@ -23,24 +24,35 @@ namespace DNN {
         Matrix &linkedMatrix;      
     };
 
-    struct CLMatrixSetup {
-        CLMatrixSetup();
+    //ENH : Make it an inner class of the matrix class
+    class CLMatrixSetup {
+    public :
+        typedef cl::KernelFunctor<cl::Buffer &, cl::Buffer &> OppKerType;
+        typedef cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &> AddKerType;
+        typedef cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &> SubKerType;
+        typedef cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &, int> ProdKerType;
 
+        static CLMatrixSetup *getDefault();
+
+        CLMatrixSetup(cl::Context context);
+        CLMatrixSetup(cl::Context context, cl::CommandQueue queue);
+
+        bool addKernelsFromSource(const char *file, cl::vector<cl::string> kernels, int8_t libCode = 0);
+        bool addKernelsFromProgram(cl::Program program, cl::vector<cl::string> kernels, int8_t libCode = 0);
+
+        inline cl::Context getContext() { return context; } //Copy is not an issue as it will only copy the wrapped pointer...
+        inline cl::CommandQueue getQueue() { return queue; }
+        inline cl::Kernel getKernel(cl::string key) { return internalKernelLib[key]; }
+    protected:
         cl::Context context;
         cl::CommandQueue queue;
-        cl::Program program;
 
-        cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &> addKer;
-        cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &> transAddKer;
+        std::unordered_map<cl::string, cl::Kernel> internalKernelLib;
+        uint8_t includedLibrairies = 0;
 
-        cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &> subKer;
-        cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &> transSubKer;
-
-        cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &, int> prodKer;
-        cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &, int> transLProdKer;
-        cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &, int> transRProdKer;
-
-        cl::KernelFunctor<cl::Buffer &, cl::Buffer &> oppKer;
+        //Default singleton management
+        CLMatrixSetup();
+        static CLMatrixSetup *defaultCLSetup;
     };
 
     //ENH : Make prepare string constexpr
@@ -89,19 +101,20 @@ namespace DNN {
         std::recursive_mutex internalLinkMutex;
 
         friend class Matrix;
+        friend class Vector;
     };
 
     //ENH : Add mutable and in link to what is seen by the user...
     //ENH : Replace assert by exception
-    //TODO : Check every usage of rows/columns, it should be real dimension of the matrix
-    //TODO : Check every usage of get...
-    //TODO : avoid assert in private methods and maybe also for protected nah ? 
+    //TODO : Check every usage of rows/columns in operators static
+    //TODO : avoid assert in private methods and maybe also for protected nah ?
+    //BUG : Matrix result of a computation have a possibly different CLSetup !!!
     class Matrix {
     public:
         //Host side creation
         Matrix() = delete; //Dimensions must be fixed...
         Matrix(int nbRow = 0, int nbCol = 0, float expr = 0.0);
-        Matrix(const cl::vector<cl::vector<float>> &initialiser);
+        Matrix(const cl::vector<cl::vector<float>> &initialiser, bool transposed = false);
 
         //Affectation creation (behaves smartly...)
         Matrix(Matrix  &toCopy);
@@ -127,8 +140,9 @@ namespace DNN {
         Matrix executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel);
 
         //Data access (we dont want them to be virtual : adapted return type and parameters)
-        virtual inline int getRowCount()    const {return transpose ? columns : rows; }
-        virtual inline int getColumnCount() const {return transpose ? rows : columns; }
+        virtual inline int  getRowCount()    const {return transpose ? columns : rows; }
+        virtual inline int  getColumnCount() const {return transpose ? rows : columns; }
+        virtual inline bool getTranspose()   const { return transpose; }
 
         inline RowAccesser operator[](cl::size_type row) { return RowAccesser(row, *this); }
         float &getLValueElement(cl::size_type row, cl::size_type col);
@@ -148,7 +162,11 @@ namespace DNN {
         inline operator bool() { return isValid(); }
 
         //Calculation management
-        static CLMatrixSetup *defaultCLSetup; 
+        static constexpr uint8_t libCode = 1 << 0;
+        static constexpr char libFile[] = "ocl/matrix.ocl";
+
+        virtual void setCLSetup(CLMatrixSetup *newSetup);
+        virtual CLMatrixSetup *getCLSetup();
                 
     protected:
         //Operations' library (to allow any derived type as return without copy)
@@ -175,7 +193,7 @@ namespace DNN {
         int rows    = 0;
         int columns = 0;
         
-        CLMatrixSetup *CLSetup = defaultCLSetup; //ENH : Risky nah ? How should it behave on copy ??
+        CLMatrixSetup *CLSetup = nullptr;
 
         //OpenCL Callbacks
         static void addDataCallbackTo(cl::Event &event, void (* cb) (cl_event, cl_int, void *), BufferLinkManager *arg);
@@ -189,7 +207,7 @@ namespace DNN {
         static void CL_CALLBACK externalUploadCallback(cl_event event, cl_int, void* _linkManager);
         static void CL_CALLBACK checkDeletionForCallbacks(BufferLinkManager *linkManager, bool buffer, bool vector);
 
-    private: 
+    private:
         //Host behavior
         enum StateFlags : uint8_t {
             NO_FLAG                 = 0,
@@ -230,6 +248,7 @@ namespace DNN {
         mutable std::mutex waitingComputationMutex;
 
         friend class VectorisedFunction;
+        friend class Vector;
     };
 
 

@@ -38,9 +38,18 @@ namespace DNN {
         inline float &getLValueElement(cl::size_type row) {return Matrix::getLValueElement(row, 0); }
         inline float  getRValueElement(cl::size_type row) {return Matrix::getRValueElement(row, 0); }
 
+        //Calculation management
+        static constexpr uint8_t libCode = 1 << 1;
+        static constexpr char libFile[] = "ocl/vector.ocl";
+
+        virtual void setCLSetup(CLMatrixSetup *newSetup) override;
     protected:
         Vector(int nbRow, cl::Buffer *existingBuffer);  //Internal device side creation
         Vector(int nbRow, cl::vector<float> *existingVector);  //Internal host side creation (for derived classes)
+
+        //Operations' library (to allow any derived type as return without copy)
+        static void opAOM(Vector &A, Matrix &B, Matrix &R);
+        static void opSOM(Vector &A, Matrix &B, Matrix &R);
 
         friend Vector operator*(Matrix &AL, Vector &X);
     };
