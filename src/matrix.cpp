@@ -3,10 +3,10 @@
 std::atomic<int> DNN::BufferLinkManager::DEBUG_created = 0;   
 std::atomic<int> DNN::BufferLinkManager::DEBUG_destroyed = 0;
 
-DNN::CLMatrixSetup *DNN::CLMatrixSetup::CLMatrixSetup::defaultCLSetup = nullptr;
+std::shared_ptr<DNN::CLMatrixSetup> DNN::CLMatrixSetup::defaultCLSetup;
 
 const cl::string DNN::VectorisedFunction::preKernelStr = 
-    "kernel void kernelFnc(global float *A, global float *R) {"
+    "kernel void main(global float *A, global float *R) {"
             "const int N = get_global_size(1);"
             "const int i = get_global_id(0);"
             "const int j = get_global_id(1);"
@@ -20,9 +20,8 @@ float &DNN::RowAccesser::operator[](cl::size_type col) {
 
 DNN::CLMatrixSetup::CLMatrixSetup() : context(cl::Context::getDefault()), queue(context)  {}
 
-DNN::CLMatrixSetup *DNN::CLMatrixSetup::getDefault() {
-    if(defaultCLSetup == nullptr) 
-        defaultCLSetup = new CLMatrixSetup();
+std::shared_ptr<DNN::CLMatrixSetup> DNN::CLMatrixSetup::getDefault() {
+    if(!defaultCLSetup) defaultCLSetup.reset(new CLMatrixSetup());
     return defaultCLSetup;
 }
 
@@ -42,8 +41,8 @@ bool DNN::CLMatrixSetup::addKernelsFromSource(const char *file, cl::vector<cl::s
     return true;
 }
 
-DNN::VectorisedFunction::VectorisedFunction(const cl::string &operation, CLMatrixSetup &setup) : setup(setup), 
-    kernel(cl::Program(setup.getContext(), cl::util::read_text_file("matrix.ocl") , true ), "kernelFnc") { }
+DNN::VectorisedFunction::VectorisedFunction(const cl::string &operation, std::weak_ptr<CLMatrixSetup> _setup) : setup(_setup), 
+    kernel(cl::Program(setup.lock()->getContext(), cl::util::read_text_file("matrix.ocl") , true ), "main") { }
 
 DNN::Matrix DNN::VectorisedFunction::operator()(Matrix &arg) {
     return arg.executeKernel(kernel);
@@ -102,9 +101,9 @@ void DNN::BufferLinkManager::waitForBufferEvents() {
     internalLinkMutex.unlock();
 }
 
-DNN::Matrix::Matrix(int nbRow, int nbCol, float expr) : rows(nbRow), columns(nbCol),
+DNN::Matrix::Matrix(int nbRow, int nbCol, float expr, std::shared_ptr<CLMatrixSetup> setup) : rows(nbRow), columns(nbCol),
     data(new BufferLinkManager(this)) {
-    Matrix::setCLSetup(CLMatrixSetup::getDefault());
+    Matrix::setCLSetup(setup);
 
     data->TS_vector = new cl::vector<float>(rows*columns, expr);
     TS_stateFlags |= StateFlags::DATA_UPLOADED;
@@ -113,9 +112,9 @@ DNN::Matrix::Matrix(int nbRow, int nbCol, float expr) : rows(nbRow), columns(nbC
     // - no thread unsafe danger.
 }
 
-DNN::Matrix::Matrix(const cl::vector<cl::vector<float>> &initialiser, bool tranposed) : rows(initialiser.size()), columns(initialiser[0].size()), transpose(tranposed),
+DNN::Matrix::Matrix(const cl::vector<cl::vector<float>> &initialiser, bool tranposed, std::shared_ptr<CLMatrixSetup> setup) : rows(initialiser.size()), columns(initialiser[0].size()), transpose(tranposed),
     data(new BufferLinkManager(this)) {
-    Matrix::setCLSetup(CLMatrixSetup::getDefault());
+    Matrix::setCLSetup(setup);
 
     bool _checkDim = true;
     for(int i = 1; i < rows; ++i)
@@ -318,7 +317,8 @@ DNN::Matrix &DNN::Matrix::operator=(Matrix &&toMove) noexcept {
 
 DNN::Matrix DNN::Matrix::operator+(Matrix &operand) {
     Matrix matrixResult(rows, columns, //As R.transpose = A.transpose
-        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns)
+        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns),
+        CLSetup
     );
     opAdd(*this, operand, matrixResult);
 
@@ -327,7 +327,8 @@ DNN::Matrix DNN::Matrix::operator+(Matrix &operand) {
 
 DNN::Matrix DNN::Matrix::operator-(Matrix &operand) {
     Matrix matrixResult(rows, columns, //As R.transpose = A.transpose
-        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns)
+        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns),
+        CLSetup
     );
     opSub(*this, operand, matrixResult);
 
@@ -338,7 +339,8 @@ DNN::Matrix DNN::Matrix::operator*(Matrix &operand) {
     Matrix matrixResult(
         (!transpose || !operand.transpose) ? getRowCount() : operand.rows,
         (!transpose || !operand.transpose) ? operand.getColumnCount() : columns,
-        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*getRowCount()*operand.getColumnCount())
+        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*getRowCount()*operand.getColumnCount()),
+        CLSetup
     );
     opMul(*this, operand, matrixResult);
 
@@ -347,7 +349,8 @@ DNN::Matrix DNN::Matrix::operator*(Matrix &operand) {
 
 DNN::Matrix DNN::Matrix::operator-() {
     Matrix matrixResult(rows, columns, 
-        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns)
+        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns),
+        CLSetup
     );
     opOpp(*this, matrixResult);
 
@@ -359,7 +362,8 @@ DNN::Matrix DNN::Matrix::executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffe
 
     //Prepare result (no need for TS behavior, see constructors)
     Matrix matrixResult(rows, columns, 
-        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns)
+        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns),
+        CLSetup
     );
     matrixResult.TS_stateFlags |= StateFlags::COMPUTATION_EXECUTING;
     matrixResult.transpose = transpose;
@@ -435,16 +439,12 @@ void DNN::Matrix::waitForConstResults() {
     waitForUpload(); 
 }
 
-void DNN::Matrix::setCLSetup(CLMatrixSetup *newSetup) {
+void DNN::Matrix::setCLSetup(std::shared_ptr<CLMatrixSetup> newSetup) {
     newSetup->addKernelsFromSource(libFile, 
         {"matrix_addition", "matrix_transAddition", "matrix_substraction", "matrix_transSubstraction", "matrix_product", "matrix_transLProduct", "matrix_transRProduct", "matrix_opposite"},
         libCode
     );
     CLSetup = newSetup;
-}
-
-DNN::CLMatrixSetup *DNN::Matrix::getCLSetup() {
-    return CLSetup;
 }
 
 // ENH : Should result matrix be checked ??
@@ -594,18 +594,18 @@ void DNN::Matrix::opOpp(Matrix &A, Matrix &R) {
     A.promptStateMutex.unlock();
 }
 
-DNN::Matrix::Matrix(int nbRow, int nbCol, cl::Buffer *existingBuffer) : rows(nbRow), columns(nbCol),
+DNN::Matrix::Matrix(int nbRow, int nbCol, cl::Buffer *existingBuffer, std::shared_ptr<CLMatrixSetup> setup) : rows(nbRow), columns(nbCol),
     data(new BufferLinkManager(this)) {
-    Matrix::setCLSetup(CLMatrixSetup::getDefault());
+    Matrix::setCLSetup(setup);
     
     data->TS_buffer = existingBuffer;
     TS_stateFlags |= StateFlags::DATA_DOWNLOADED;
     //Buffer side creation : no thread unsafe danger
 }
 
-DNN::Matrix::Matrix(int nbRow, int nbCol, cl::vector<float> *existingVector)  : rows(nbRow), columns(nbCol),
+DNN::Matrix::Matrix(int nbRow, int nbCol, cl::vector<float> *existingVector, std::shared_ptr<CLMatrixSetup> setup)  : rows(nbRow), columns(nbCol),
     data(new BufferLinkManager(this)) {
-    Matrix::setCLSetup(CLMatrixSetup::getDefault());
+    Matrix::setCLSetup(setup);
     
     data->TS_vector = existingVector;
     TS_stateFlags |= StateFlags::DATA_UPLOADED;

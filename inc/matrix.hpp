@@ -11,6 +11,7 @@
 #include <iostream>
 #include <iomanip>
 #include <unordered_map>
+#include <memory>
 
 namespace DNN {
     class Matrix;
@@ -32,7 +33,7 @@ namespace DNN {
         typedef cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &> SubKerType;
         typedef cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &, int> ProdKerType;
 
-        static CLMatrixSetup *getDefault();
+        static std::shared_ptr<CLMatrixSetup> getDefault();
 
         CLMatrixSetup(cl::Context context);
         CLMatrixSetup(cl::Context context, cl::CommandQueue queue);
@@ -52,7 +53,7 @@ namespace DNN {
 
         //Default singleton management
         CLMatrixSetup();
-        static CLMatrixSetup *defaultCLSetup;
+        static std::shared_ptr<CLMatrixSetup> defaultCLSetup;
     };
 
     //ENH : Make prepare string constexpr
@@ -60,12 +61,12 @@ namespace DNN {
     class VectorisedFunction {
         public:
             VectorisedFunction() = delete;
-            VectorisedFunction(const cl::string &operation, CLMatrixSetup &setup);
+            VectorisedFunction(const cl::string &operation, std::weak_ptr<CLMatrixSetup> setup); //BUG : How to handle this pointer
 
             Matrix operator()(Matrix &arg);
             static cl::string prepareString(const cl::string &operation);
         protected:
-            CLMatrixSetup &setup;
+            std::weak_ptr<CLMatrixSetup> setup;
             cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel;
 
             static const cl::string preKernelStr;
@@ -106,15 +107,15 @@ namespace DNN {
 
     //ENH : Add mutable and in link to what is seen by the user...
     //ENH : Replace assert by exception
+    //ENH : avoid assert in private methods and maybe also for protected nah ?
     //TODO : Check every usage of rows/columns in operators static
-    //TODO : avoid assert in private methods and maybe also for protected nah ?
     //BUG : Matrix result of a computation have a possibly different CLSetup !!!
     class Matrix {
     public:
         //Host side creation
         Matrix() = delete; //Dimensions must be fixed...
-        Matrix(int nbRow = 0, int nbCol = 0, float expr = 0.0);
-        Matrix(const cl::vector<cl::vector<float>> &initialiser, bool transposed = false);
+        Matrix(int nbRow = 0, int nbCol = 0, float expr = 0.0, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
+        Matrix(const cl::vector<cl::vector<float>> &initialiser, bool transposed = false, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
 
         //Affectation creation (behaves smartly...)
         Matrix(Matrix  &toCopy);
@@ -143,6 +144,7 @@ namespace DNN {
         virtual inline int  getRowCount()    const {return transpose ? columns : rows; }
         virtual inline int  getColumnCount() const {return transpose ? rows : columns; }
         virtual inline bool getTranspose()   const { return transpose; }
+        virtual inline std::shared_ptr<CLMatrixSetup> getCLSetup() { return CLSetup; }
 
         inline RowAccesser operator[](cl::size_type row) { return RowAccesser(row, *this); }
         float &getLValueElement(cl::size_type row, cl::size_type col);
@@ -160,13 +162,6 @@ namespace DNN {
         inline bool isValid() const
             { return data != nullptr && (data->TS_vector != nullptr || data->TS_buffer != nullptr); }
         inline operator bool() { return isValid(); }
-
-        //Calculation management
-        static constexpr uint8_t libCode = 1 << 0;
-        static constexpr char libFile[] = "ocl/matrix.ocl";
-
-        virtual void setCLSetup(CLMatrixSetup *newSetup);
-        virtual CLMatrixSetup *getCLSetup();
                 
     protected:
         //Operations' library (to allow any derived type as return without copy)
@@ -176,8 +171,8 @@ namespace DNN {
         static void opOpp(Matrix &A, Matrix &R);
 
         //Automatic data management
-        Matrix(int nbRow, int nbCol, cl::Buffer *existingBuffer);  //Internal device side creation
-        Matrix(int nbRow, int nbCol, cl::vector<float> *existingVector);  //Internal host side creation (for derived classes)
+        Matrix(int nbRow, int nbCol, cl::Buffer *existingBuffer       , std::shared_ptr<CLMatrixSetup> setup);  //Internal device side creation
+        Matrix(int nbRow, int nbCol, cl::vector<float> *existingVector, std::shared_ptr<CLMatrixSetup> setup);  //Internal host side creation (for derived classes)
         void mangageBeforeComputation(cl::vector<cl::Event> &requiredEvents);
 
         void waitForExternal();
@@ -192,8 +187,14 @@ namespace DNN {
         bool transpose = false;
         int rows    = 0;
         int columns = 0;
-        
-        CLMatrixSetup *CLSetup = nullptr;
+
+        //Calculation management
+
+        static constexpr uint8_t libCode = 1 << 0;
+        static constexpr char libFile[] = "ocl/matrix.ocl";
+
+        virtual void setCLSetup(std::shared_ptr<CLMatrixSetup> newSetup);        
+        std::shared_ptr<CLMatrixSetup> CLSetup = nullptr;
 
         //OpenCL Callbacks
         static void addDataCallbackTo(cl::Event &event, void (* cb) (cl_event, cl_int, void *), BufferLinkManager *arg);

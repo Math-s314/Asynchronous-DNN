@@ -8,9 +8,9 @@ namespace DNN {
     public :
         //Host side creation
         Vector() = delete;
-        Vector(int nbRow, float expr = 0.0);
-        Vector(const cl::vector<float> &initialiser);
-        Vector(cl::vector<float> &&initialiser);
+        Vector(int nbRow, float expr = 0.0, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
+        Vector(const cl::vector<float> &initialiser, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
+        Vector(cl::vector<float> &&initialiser, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
 
         //Affectation creation (behaves smartly...)
         Vector(Vector  &toCopy);
@@ -42,10 +42,10 @@ namespace DNN {
         static constexpr uint8_t libCode = 1 << 1;
         static constexpr char libFile[] = "ocl/vector.ocl";
 
-        virtual void setCLSetup(CLMatrixSetup *newSetup) override;
+        virtual void setCLSetup(std::shared_ptr<CLMatrixSetup> newSetup) override;
     protected:
-        Vector(int nbRow, cl::Buffer *existingBuffer);  //Internal device side creation
-        Vector(int nbRow, cl::vector<float> *existingVector);  //Internal host side creation (for derived classes)
+        Vector(int nbRow, cl::Buffer *existingBuffer       , std::shared_ptr<CLMatrixSetup> setup);  //Internal device side creation
+        Vector(int nbRow, cl::vector<float> *existingVector, std::shared_ptr<CLMatrixSetup> setup);  //Internal host side creation (for derived classes)
 
         //Operations' library (to allow any derived type as return without copy)
         static void opAOM(Vector &A, Matrix &B, Matrix &R);

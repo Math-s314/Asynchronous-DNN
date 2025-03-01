@@ -1,14 +1,14 @@
 #include "vector.hpp"
 
-DNN::Vector::Vector(int nbRow, float expr) : Matrix(nbRow, 1, expr) {
+DNN::Vector::Vector(int nbRow, float expr, std::shared_ptr<CLMatrixSetup> setup) : Matrix(nbRow, 1, expr, setup) {
     Vector::setCLSetup(CLSetup);
 }
 
-DNN::Vector::Vector(const cl::vector<float> &initialiser) : Matrix(initialiser.size(), 1, new cl::vector<float>(initialiser)) {
+DNN::Vector::Vector(const cl::vector<float> &initialiser, std::shared_ptr<CLMatrixSetup> setup) : Matrix(initialiser.size(), 1, new cl::vector<float>(initialiser), setup) {
     Vector::setCLSetup(CLSetup);
 }
 
-DNN::Vector::Vector(cl::vector<float> &&initialiser) : Matrix(initialiser.size(), 1, new cl::vector<float>((cl::vector<float> &&) initialiser)) {
+DNN::Vector::Vector(cl::vector<float> &&initialiser, std::shared_ptr<CLMatrixSetup> setup) : Matrix(initialiser.size(), 1, new cl::vector<float>((cl::vector<float> &&) initialiser), setup) {
     Vector::setCLSetup(CLSetup);
 }
 
@@ -28,7 +28,8 @@ DNN::Vector::Vector(Matrix &&toMove) noexcept : Matrix((Matrix &&) toMove) {
 
 DNN::Vector DNN::Vector::operator+(Vector &operand) {
     Vector vectorResult(rows,
-        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows)
+        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows),
+        CLSetup
     );
     opAdd(*this, operand, vectorResult);
 
@@ -37,7 +38,8 @@ DNN::Vector DNN::Vector::operator+(Vector &operand) {
 
 DNN::Vector DNN::Vector::operator-(Vector &operand) {
     Vector vectorResult(rows,
-        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows)
+        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows),
+        CLSetup
     );
     opSub(*this, operand, vectorResult);
 
@@ -46,7 +48,8 @@ DNN::Vector DNN::Vector::operator-(Vector &operand) {
 
 DNN::Vector DNN::Vector::operator-() {
     Vector vectorResult(rows,
-        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows)
+        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows),
+        CLSetup
     );
     opOpp(*this, vectorResult);
 
@@ -55,7 +58,8 @@ DNN::Vector DNN::Vector::operator-() {
 
 DNN::Matrix DNN::Vector::addOverMatrix(Matrix &operand) {
     Matrix matrixResult(operand.getRowCount(), operand.getColumnCount(), //As R.transpose = A.transpose
-        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*operand.rows*operand.columns)
+        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*operand.rows*operand.columns), 
+        CLSetup
     );
     opAOM(*this, operand, matrixResult);
 
@@ -64,14 +68,15 @@ DNN::Matrix DNN::Vector::addOverMatrix(Matrix &operand) {
 
 DNN::Matrix DNN::Vector::subOverMatrix(Matrix &operand) {
     Matrix matrixResult(operand.getRowCount(), operand.getColumnCount(), //As R.transpose = A.transpose
-        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*operand.rows*operand.columns)
+        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*operand.rows*operand.columns),
+        CLSetup
     );
     opSOM(*this, operand, matrixResult);
 
     return matrixResult;
 }
 
-void DNN::Vector::setCLSetup(CLMatrixSetup *newSetup) {
+void DNN::Vector::setCLSetup(std::shared_ptr<CLMatrixSetup> newSetup) {
     newSetup->addKernelsFromSource(libFile, 
         {"vector_additionOM", "vector_transAdditionOM", "vector_substractionOM", "vector_transSubstractionOM"},
         libCode
@@ -79,11 +84,11 @@ void DNN::Vector::setCLSetup(CLMatrixSetup *newSetup) {
     Matrix::setCLSetup(newSetup);
 }
 
-DNN::Vector::Vector(int nbRow, cl::Buffer *existingBuffer) : Matrix(nbRow, 1, existingBuffer) {
+DNN::Vector::Vector(int nbRow, cl::Buffer *existingBuffer, std::shared_ptr<CLMatrixSetup> setup) : Matrix(nbRow, 1, existingBuffer, setup) {
     Vector::setCLSetup(CLSetup);
 }
 
-DNN::Vector::Vector(int nbRow, cl::vector<float> *existingVector) : Matrix(nbRow, 1, existingVector) {
+DNN::Vector::Vector(int nbRow, cl::vector<float> *existingVector, std::shared_ptr<CLMatrixSetup> setup) : Matrix(nbRow, 1, existingVector, setup) {
     Vector::setCLSetup(CLSetup);
 }
 
@@ -163,7 +168,8 @@ void DNN::Vector::opSOM(Vector &A, Matrix &B, Matrix &R) {
 
 DNN::Vector DNN::operator*(Matrix &AL, Vector &X) {
     Vector vectorResult(AL.getRowCount(),
-        new cl::Buffer (AL.getCLSetup()->getContext(), CL_MEM_READ_WRITE, sizeof(float)*AL.getRowCount()) //ENH : Setup is not usual !!!
+        new cl::Buffer (AL.getCLSetup()->getContext(), CL_MEM_READ_WRITE, sizeof(float)*AL.getRowCount()),
+        AL.getCLSetup()
     );
     Matrix::opMul(AL, X, vectorResult);
 
