@@ -60,11 +60,11 @@ namespace DNN {
             VectorisedFunction() = delete;
             VectorisedFunction(const cl::string &operation, std::weak_ptr<CLMatrixSetup> setup);
 
-            Matrix operator()(Matrix &arg);
+            Matrix operator()(const Matrix &arg) const;
             static cl::string prepareString(const cl::string &operation);
         protected:
             std::weak_ptr<CLMatrixSetup> setup;
-            cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel;
+            mutable cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel;
 
             static const cl::string preKernelStr;
             static const cl::string postKernelStr;
@@ -80,14 +80,14 @@ namespace DNN {
         ~BufferLinkManager();
 
         void registerForDeletion();
-        inline void addBufferEvent() { std::lock_guard<std::recursive_mutex> lock(internalLinkMutex); ++TS_bufferAccess; }
-        inline void addVectorEvent() { std::lock_guard<std::recursive_mutex> lock(internalLinkMutex); ++TS_vectorAccess; }
-        void waitForBufferEvents();
+        inline void addBufferEvent() const { std::lock_guard<std::recursive_mutex> lock(internalLinkMutex); ++TS_bufferAccess; }
+        inline void addVectorEvent() const { std::lock_guard<std::recursive_mutex> lock(internalLinkMutex); ++TS_vectorAccess; }
+        void waitForBufferEvents() const;
 
         static std::atomic<int> DEBUG_created;   
         static std::atomic<int> DEBUG_destroyed;   
     private:
-        mutable bool TS_tobeDeleted  = false;
+        bool TS_tobeDeleted  = false;
         mutable volatile unsigned long long TS_bufferAccess = 0;
         mutable volatile unsigned long long TS_vectorAccess = 0;
 
@@ -96,7 +96,7 @@ namespace DNN {
         cl::vector<float> * volatile TS_vector = nullptr; //TS unless registered for deletion...
 
         //The matrix is in charge of locking this mutex when making direct access...
-        std::recursive_mutex internalLinkMutex;
+        mutable std::recursive_mutex internalLinkMutex;
 
         friend class Matrix;
         friend class Vector;
@@ -113,27 +113,27 @@ namespace DNN {
         Matrix(const cl::vector<cl::vector<float>> &initializer, bool transposed = false, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
 
         //Affectation creation (behaves smartly...)
-        Matrix(Matrix  &toCopy);
+        Matrix(const Matrix  &toCopy);
         Matrix(Matrix &&toMove) noexcept;
         virtual ~Matrix();
 
-        Matrix &operator=(Matrix &toCopy);
+        Matrix &operator=(const Matrix &toCopy);
         Matrix &operator=(Matrix &&toMove) noexcept;
 
         //Operations' public library (we don't want them to be virtual : adapted return type)
-        Matrix operator+(Matrix &operand); //ENH : Add rvalue version ?
-        Matrix operator-(Matrix &operand);
-        Matrix operator*(Matrix &operand);
-        Matrix operator-();
+        Matrix operator+(const Matrix &operand) const; //ENH : Add rvalue version ?
+        Matrix operator-(const Matrix &operand) const;
+        Matrix operator*(const Matrix &operand) const;
+        Matrix operator-() const;
 
-        Matrix hadamardProduct(Matrix &operand);
+        Matrix hadamardProduct(const Matrix &operand) const;
         //ENH : Add new operators...
         // Matrix operator^(int power);
         // Matrix operator+(float scalar);
         // Matrix operator-(float scalar);
         // Matrix operator*(float scalar);
 
-        Matrix executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel);
+        Matrix executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> &kernel) const;
 
         //Data access (we don't want them to be virtual : adapted return type and parameters)
         virtual inline int  getRowCount()    const {return transpose ? columns : rows; }
@@ -143,49 +143,51 @@ namespace DNN {
 
         inline RowAccesser operator[](cl::size_type row) { return RowAccesser(row, *this); }
         float &getLValueElement(cl::size_type row, cl::size_type col);
-        float getRValueElement(cl::size_type row, cl::size_type col);
+        float getRValueElement(cl::size_type row, cl::size_type col) const;
 
         //Public data management
-        void askForResults();// Ask for upload if not uploaded
-        void waitForResults(); //Ask for upload if not uploaded and wait for it
-        void waitForConstResults();
+        void askForResults() const;// Ask for upload if not uploaded
+        void waitForResults() const; //Ask for upload if not uploaded and wait for it
+        void waitForConstResults() const;
 
-        inline bool areComputationsFinished() 
+        inline bool areComputationsFinished() const
             { return TS_stateFlags & StateFlags::COMPUTATION_EXECUTED; }
-        inline bool areResultsAvailable() 
-            { return TS_stateFlags & StateFlags::DATA_UPLOADED; }
+        inline bool areConstResultsAvailable() const
+            { return !(TS_stateFlags & StateFlags::DATA_UPLOADED) && !(TS_stateFlags & StateFlags::EXTERNAL_FLAGS); }
+        inline bool areResultsAvailable() const
+            { return areConstResultsAvailable() && !(TS_stateFlags & StateFlags::DATA_DOWNLOADING); }
         inline bool isValid() const
             { return data != nullptr && (data->TS_vector != nullptr || data->TS_buffer != nullptr); }
-        inline operator bool() { return isValid(); }
+        inline operator bool() const { return isValid(); }
                 
     protected:
         //Operations' library (to allow any derived type as return without copy)
-        static void opAdd(Matrix &A, Matrix &B, Matrix &R);
-        static void opSub(Matrix &A, Matrix &B, Matrix &R);
-        static void opMul(Matrix &A, Matrix &B, Matrix &R);
-        static void opHad(Matrix &A, Matrix &B, Matrix &R);
-        static void opOpp(Matrix &A, Matrix &R);
+        static void opAdd(const Matrix &A, const Matrix &B, Matrix &R);
+        static void opSub(const Matrix &A, const Matrix &B, Matrix &R);
+        static void opMul(const Matrix &A, const Matrix &B, Matrix &R);
+        static void opHad(const Matrix &A, const Matrix &B, Matrix &R);
+        static void opOpp(const Matrix &A, Matrix &R);
 
         template<typename... Ts> //WARNING : Does not take in account reading events for R !!
-        static void basicUnaryOp(Matrix &A, Matrix &R, bool transpose, int rows, int columns, cl::KernelFunctor<cl::Buffer &, cl::Buffer &, Ts...> &kernel, Ts... args);
+        static void basicUnaryOp(const Matrix &A, Matrix &R, bool transpose, int rows, int columns, cl::KernelFunctor<cl::Buffer &, cl::Buffer &, Ts...> &kernel, Ts... args);
         template<typename... Ts> //WARNING : Does not take in account reading events for R !!
-        static void basicBinaryOp(Matrix &A, Matrix &B, Matrix &R, bool transpose, int rows, int columns, cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &, Ts...> &kernel, Ts... args);
+        static void basicBinaryOp(const Matrix &A, const Matrix &B, Matrix &R, bool transpose, int rows, int columns, cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &, Ts...> &kernel, Ts... args);
 
         //Automatic data management
         Matrix(int nbRow, int nbCol, cl::Buffer *existingBuffer       , std::shared_ptr<CLMatrixSetup> setup);  //Internal device side creation
         Matrix(int nbRow, int nbCol, cl::vector<float> *existingVector, std::shared_ptr<CLMatrixSetup> setup);  //Internal host side creation (for derived classes)
 
-        void manageBeforeReading(bool download = true);
-        void manageBeforeComputation(cl::vector<cl::Event> &requiredEvents, bool includeUpload = false);
+        void manageBeforeReading(bool download = true) const;
+        void manageBeforeComputation(cl::vector<cl::Event> &requiredEvents, bool includeUpload = false) const;
 
-        void waitForExternal();
-        void waitForDownload();
-        void waitForComputation();
-        void waitForUpload();
-        void safelyWaitForEvent(cl::Event &event, std::mutex &waitingMutex, bool relock = true);
+        void waitForExternal() const;
+        void waitForDownload() const;
+        void waitForComputation() const;
+        void waitForUpload() const;
+        void safelyWaitForEvent(cl::Event &event, std::mutex &waitingMutex, bool relock = true) const;
 
-        void downloadData();
-        void uploadData();
+        void downloadData() const;
+        void uploadData() const;
 
         bool transpose = false;
         int rows    = 0;
@@ -237,7 +239,7 @@ namespace DNN {
                 EXTERNAL_DOWNLOADING    | EXTERNAL_UPLOADING    
         };
         static inline constexpr uint8_t oppFlag(uint8_t flags) { return 255 - flags; };
-        volatile uint8_t TS_stateFlags = StateFlags::NO_FLAG;
+        mutable volatile uint8_t TS_stateFlags = StateFlags::NO_FLAG;
 
         //OpenCL behavior
         //The wrapped cl_event should be null if no corresponding command is executed (includes externals).
@@ -251,9 +253,13 @@ namespace DNN {
         mutable std::mutex waitingDownloadMutex;
         mutable std::mutex waitingComputationMutex;
 
+        //Derived full access class
         friend class VectorisedFunction;
         friend class Vector;
         friend class SquareMatrix;
+
+        //External operators
+        friend Vector operator*(Matrix &AL, Vector &X);
     };
 
     //Other operators for the Matrix class
@@ -262,7 +268,7 @@ namespace DNN {
 
     //Templates' definition
     template <typename... Ts>
-    inline void Matrix::basicUnaryOp(Matrix &A, Matrix &R, bool transpose, int rows, int columns, cl::KernelFunctor<cl::Buffer &, cl::Buffer &, Ts...> &kernel, Ts... args) {
+    inline void Matrix::basicUnaryOp(const Matrix &A, Matrix &R, bool transpose, int rows, int columns, cl::KernelFunctor<cl::Buffer &, cl::Buffer &, Ts...> &kernel, Ts... args) {
         //Prepare events
         cl::vector<cl::Event> events;
         events.reserve(3);
@@ -280,8 +286,9 @@ namespace DNN {
 
         //Actual computations...
         std::lock_guard<std::recursive_mutex> lockRes(R.promptStateMutex);
+        cl::CommandQueue queue = A.CLSetup->getQueue();
         R.TS_lastComputationEvent = kernel( //Here the previous cl_event will be correctly released...
-            cl::EnqueueArgs(A.CLSetup->getQueue(), events, cl::NDRange(R.rows, R.columns)),
+            cl::EnqueueArgs(queue, events, cl::NDRange(R.rows, R.columns)),
             *A.data->TS_buffer,
             *R.data->TS_buffer,
             args...
@@ -296,7 +303,7 @@ namespace DNN {
     }
 
     template <typename... Ts>
-    inline void Matrix::basicBinaryOp(Matrix &A, Matrix &B, Matrix &R, bool transpose, int rows, int columns, cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &, Ts...> &kernel, Ts... args) {
+    inline void Matrix::basicBinaryOp(const Matrix &A, const Matrix &B, Matrix &R, bool transpose, int rows, int columns, cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &, Ts...> &kernel, Ts... args) {
         //Prepare operands
         cl::vector<cl::Event> events;
         events.reserve(4);
@@ -316,8 +323,9 @@ namespace DNN {
 
         //Actual computations...
         std::lock_guard<std::recursive_mutex> lockRes(R.promptStateMutex);
+        cl::CommandQueue queue = A.CLSetup->getQueue();
         R.TS_lastComputationEvent = kernel( //Here the previous cl_event will be correctly released...
-            cl::EnqueueArgs(A.CLSetup->getQueue(), events, cl::NDRange(R.rows, R.columns)),
+            cl::EnqueueArgs(queue, events, cl::NDRange(R.rows, R.columns)),
             *A.data->TS_buffer,
             *B.data->TS_buffer,
             *R.data->TS_buffer,

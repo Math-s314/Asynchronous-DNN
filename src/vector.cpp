@@ -12,11 +12,11 @@ DNN::Vector::Vector(cl::vector<float> &&initializer, std::shared_ptr<CLMatrixSet
     Vector::setCLSetup(CLSetup);
 }
 
-DNN::Vector::Vector(Vector &toCopy) : Matrix(toCopy) {}
+DNN::Vector::Vector(const Vector &toCopy) : Matrix(toCopy) {}
 
 DNN::Vector::Vector(Vector &&toMove) noexcept : Matrix((Matrix &&) toMove) {}
 
-DNN::Vector::Vector(Matrix &toCopy) : Matrix(toCopy) {
+DNN::Vector::Vector(const Matrix &toCopy) : Matrix(toCopy) {
     assert(columns == 1);
     Vector::setCLSetup(CLSetup);
 }
@@ -26,7 +26,7 @@ DNN::Vector::Vector(Matrix &&toMove) noexcept : Matrix((Matrix &&) toMove) {
     Vector::setCLSetup(CLSetup);
 }
 
-DNN::Vector DNN::Vector::operator+(Vector &operand) {
+DNN::Vector DNN::Vector::operator+(const Vector &operand) const {
     Vector vectorResult(getRowCount(),
         new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*getRowCount()),
         CLSetup
@@ -36,7 +36,7 @@ DNN::Vector DNN::Vector::operator+(Vector &operand) {
     return vectorResult;
 }
 
-DNN::Vector DNN::Vector::operator-(Vector &operand) {
+DNN::Vector DNN::Vector::operator-(const Vector &operand) const {
     Vector vectorResult(getRowCount(),
         new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*getRowCount()),
         CLSetup
@@ -46,7 +46,7 @@ DNN::Vector DNN::Vector::operator-(Vector &operand) {
     return vectorResult;
 }
 
-DNN::Vector DNN::Vector::operator-() {
+DNN::Vector DNN::Vector::operator-() const {
     Vector vectorResult(getRowCount(),
         new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*getRowCount()),
         CLSetup
@@ -56,7 +56,7 @@ DNN::Vector DNN::Vector::operator-() {
     return vectorResult;
 }
 
-DNN::Vector DNN::Vector::hadamardProduct(Vector &operand) {
+DNN::Vector DNN::Vector::hadamardProduct(const Vector &operand) const {
     Vector vectorResult(getRowCount(),
         new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*getRowCount()),
         CLSetup
@@ -66,7 +66,7 @@ DNN::Vector DNN::Vector::hadamardProduct(Vector &operand) {
     return vectorResult;
 }
 
-DNN::Vector DNN::Vector::executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel) {
+DNN::Vector DNN::Vector::executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel) const {
     assert(isValid());
 
     //Prepare result (no need for TS behavior, see constructors)
@@ -79,7 +79,7 @@ DNN::Vector DNN::Vector::executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffe
     return vectorResult;
 }
 
-DNN::Matrix DNN::Vector::addOverMatrix(Matrix &operand) {
+DNN::Matrix DNN::Vector::addOverMatrix(const Matrix &operand) const {
     Matrix matrixResult(operand.getRowCount(), operand.getColumnCount(), //As R.transpose = A.transpose
         new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*operand.rows*operand.columns), 
         CLSetup
@@ -89,7 +89,7 @@ DNN::Matrix DNN::Vector::addOverMatrix(Matrix &operand) {
     return matrixResult;
 }
 
-DNN::Matrix DNN::Vector::subOverMatrix(Matrix &operand) {
+DNN::Matrix DNN::Vector::subOverMatrix(const Matrix &operand) const {
     Matrix matrixResult(operand.getRowCount(), operand.getColumnCount(), //As R.transpose = A.transpose
         new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*operand.rows*operand.columns),
         CLSetup
@@ -115,7 +115,7 @@ DNN::Vector::Vector(int nbRow, cl::vector<float> *existingVector, std::shared_pt
     Vector::setCLSetup(CLSetup);
 }
 
-void DNN::Vector::opAOM(Vector &A, Matrix &B, Matrix &R) {
+void DNN::Vector::opAOM(const Vector &A, const Matrix &B, Matrix &R) {
     assert(A.getRowCount() == B.getRowCount());
 
     //Prepare result and transposition (no need for TS behavior, see constructors)
@@ -123,7 +123,7 @@ void DNN::Vector::opAOM(Vector &A, Matrix &B, Matrix &R) {
     basicBinaryOp(A, B, R, false, B.getRowCount(), B.getColumnCount(), kernel);
 }
 
-void DNN::Vector::opSOM(Vector &A, Matrix &B, Matrix &R) {
+void DNN::Vector::opSOM(const Vector &A, const Matrix &B, Matrix &R) {
     assert(A.getRowCount() == B.getRowCount());
 
     //Prepare result and transposition (no need for TS behavior, see constructors)

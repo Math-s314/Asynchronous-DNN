@@ -16,21 +16,21 @@ namespace DNN {
         virtual ~SquareMatrix() = default;
         
         //Affectation operators
-        inline SquareMatrix &operator=(SquareMatrix  &toCopy)           { return *this = (Matrix  &) toCopy; }
-        inline SquareMatrix &operator=(SquareMatrix &&toMove) noexcept  { return *this = (Matrix &&) toMove; }
-        inline SquareMatrix &operator=(Matrix        &toCopy)           { this->Matrix::operator=((Matrix  &) toCopy); return *this; }
-        inline SquareMatrix &operator=(Matrix       &&toMove) noexcept  { this->Matrix::operator=((Matrix &&) toMove); return *this; }
+        inline SquareMatrix &operator=(const SquareMatrix  &toCopy)           { return *this = (Matrix  &) toCopy; }
+        inline SquareMatrix &operator=(SquareMatrix       &&toMove) noexcept  { return *this = (Matrix &&) toMove; }
+        inline SquareMatrix &operator=(const Matrix        &toCopy)           { this->Matrix::operator=((Matrix  &) toCopy); return *this; }
+        inline SquareMatrix &operator=(Matrix             &&toMove) noexcept  { this->Matrix::operator=((Matrix &&) toMove); return *this; }
 
         //Public operations' library
-        SquareMatrix operator+(SquareMatrix &operand);
-        SquareMatrix operator-(SquareMatrix &operand);
-        SquareMatrix operator*(SquareMatrix &operand);
+        SquareMatrix operator+(const SquareMatrix &operand) const;
+        SquareMatrix operator-(const SquareMatrix &operand) const;
+        SquareMatrix operator*(const SquareMatrix &operand) const;
 
-        SquareMatrix operator^(int exp);
-        SquareMatrix operator-();
+        SquareMatrix operator^(int exp) const;
+        SquareMatrix operator-() const;
 
-        SquareMatrix hadamardProduct(SquareMatrix &operand);
-        SquareMatrix executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel);
+        SquareMatrix hadamardProduct(const SquareMatrix &operand) const;
+        SquareMatrix executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel) const;
 
         static SquareMatrix identity(int N, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
         
@@ -39,7 +39,7 @@ namespace DNN {
         SquareMatrix(int N, cl::vector<float> *existingVector, std::shared_ptr<CLMatrixSetup> setup);  //Internal host side creation (for derived classes)
 
         //Operations' library (to allow any derived type as return without copy)
-        static void opPow(SquareMatrix &A, unsigned int exp, SquareMatrix &R);
+        static void opPow(const SquareMatrix &A, unsigned int exp, SquareMatrix &R);
 
         //Calculation management
         static constexpr uint8_t libCode = 1 << 0;

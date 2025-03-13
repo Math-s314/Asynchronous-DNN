@@ -41,10 +41,21 @@ bool DNN::CLMatrixSetup::addKernelsFromSource(const char *file, cl::vector<cl::s
     return true;
 }
 
+bool DNN::CLMatrixSetup::addKernelsFromProgram(cl::Program program, cl::vector<cl::string> kernels, int8_t libCode) {
+    if(libCode & includedLibraries) return false;
+
+    for(auto key : kernels) {
+        if(internalKernelLib.find(key) == internalKernelLib.end())
+            internalKernelLib[key] = cl::Kernel(program, key);
+    }
+    includedLibraries |= libCode;
+    return true;
+}
+
 DNN::VectorisedFunction::VectorisedFunction(const cl::string &operation, std::weak_ptr<CLMatrixSetup> _setup) : setup(_setup), 
     kernel(cl::Program(setup.lock()->getContext(), cl::util::read_text_file("matrix.ocl") , true ), "main") { }
 
-DNN::Matrix DNN::VectorisedFunction::operator()(Matrix &arg) {
+DNN::Matrix DNN::VectorisedFunction::operator()(const Matrix &arg) const {
     return arg.executeKernel(kernel);
 }
 
@@ -95,7 +106,7 @@ void DNN::BufferLinkManager::registerForDeletion() {
     internalLinkMutex.unlock();
 }
 
-void DNN::BufferLinkManager::waitForBufferEvents() {
+void DNN::BufferLinkManager::waitForBufferEvents() const {
     internalLinkMutex.lock();
     while (TS_bufferAccess > 0) {
         internalLinkMutex.unlock();
@@ -135,7 +146,7 @@ DNN::Matrix::Matrix(const cl::vector<cl::vector<float>> &initializer, bool trans
     // - no thread unsafe danger.
 }
 
-DNN::Matrix::Matrix(Matrix &toCopy) : rows(toCopy.rows), columns(toCopy.columns) {
+DNN::Matrix::Matrix(const Matrix &toCopy) : rows(toCopy.rows), columns(toCopy.columns) {
     *this = toCopy; //Using copy affectation as it should behave the same...
 }
 
@@ -152,7 +163,7 @@ DNN::Matrix::~Matrix() {
 }
 
 //ENH : Should we really delete all the previous data ??
-DNN::Matrix &DNN::Matrix::operator=(Matrix &toCopy) {
+DNN::Matrix &DNN::Matrix::operator=(const Matrix &toCopy) {
     assert(getRowCount() == toCopy.getRowCount() && getColumnCount() == toCopy.getColumnCount());
     if(this == &toCopy || data == toCopy.data || !toCopy.isValid()) 
         return *this;
@@ -317,7 +328,7 @@ DNN::Matrix &DNN::Matrix::operator=(Matrix &&toMove) noexcept {
     return *this;
 }
 
-DNN::Matrix DNN::Matrix::operator+(Matrix &operand) {
+DNN::Matrix DNN::Matrix::operator+(const Matrix &operand) const {
     Matrix matrixResult(rows, columns, //As R.transpose = A.transpose
         new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns),
         CLSetup
@@ -327,7 +338,7 @@ DNN::Matrix DNN::Matrix::operator+(Matrix &operand) {
     return matrixResult;
 }
 
-DNN::Matrix DNN::Matrix::operator-(Matrix &operand) {
+DNN::Matrix DNN::Matrix::operator-(const Matrix &operand) const {
     Matrix matrixResult(rows, columns, //As R.transpose = A.transpose
         new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns),
         CLSetup
@@ -337,7 +348,7 @@ DNN::Matrix DNN::Matrix::operator-(Matrix &operand) {
     return matrixResult;
 }
 
-DNN::Matrix DNN::Matrix::operator*(Matrix &operand) {
+DNN::Matrix DNN::Matrix::operator*(const Matrix &operand) const {
     Matrix matrixResult(
         (!transpose || !operand.transpose) ? getRowCount() : operand.rows,
         (!transpose || !operand.transpose) ? operand.getColumnCount() : columns,
@@ -349,7 +360,7 @@ DNN::Matrix DNN::Matrix::operator*(Matrix &operand) {
     return matrixResult;
 }
 
-DNN::Matrix DNN::Matrix::operator-() {
+DNN::Matrix DNN::Matrix::operator-() const {
     Matrix matrixResult(rows, columns, 
         new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns),
         CLSetup
@@ -359,7 +370,7 @@ DNN::Matrix DNN::Matrix::operator-() {
     return matrixResult;
 }
 
-DNN::Matrix DNN::Matrix::hadamardProduct(Matrix &operand) {
+DNN::Matrix DNN::Matrix::hadamardProduct(const Matrix &operand) const {
     Matrix matrixResult(rows, columns,
         new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns),
         CLSetup
@@ -369,7 +380,7 @@ DNN::Matrix DNN::Matrix::hadamardProduct(Matrix &operand) {
     return matrixResult;
 }
 
-DNN::Matrix DNN::Matrix::executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel) {
+DNN::Matrix DNN::Matrix::executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> &kernel) const {
     assert(isValid());
 
     //Prepare result (no need for TS behavior, see constructors)
@@ -398,7 +409,7 @@ float &DNN::Matrix::getLValueElement(cl::size_type row, cl::size_type col) {
     return (*data->TS_vector)[index]; //Thread safe because it can't be registered for deletion...
 }
 
-float DNN::Matrix::getRValueElement(cl::size_type row, cl::size_type col) {
+float DNN::Matrix::getRValueElement(cl::size_type row, cl::size_type col) const {
     assert(row < getRowCount() && col < getColumnCount() && isValid());
     waitForConstResults();
 
@@ -406,13 +417,13 @@ float DNN::Matrix::getRValueElement(cl::size_type row, cl::size_type col) {
     return (*data->TS_vector)[index]; //Thread safe because it can't be registered for deletion...
 }
 
-void DNN::Matrix::askForResults() {
+void DNN::Matrix::askForResults() const {
     if(!isValid()) return;
 
     uploadData();
 }
 
-void DNN::Matrix::waitForResults() {
+void DNN::Matrix::waitForResults() const {
     if(!isValid()) return;
 
     //Basically waits for any possible event (except readings !!)...
@@ -422,7 +433,7 @@ void DNN::Matrix::waitForResults() {
     waitForUpload();
 }
 
-void DNN::Matrix::waitForConstResults() {
+void DNN::Matrix::waitForConstResults() const {
     if(!isValid()) return;
 
     uploadData();
@@ -445,14 +456,14 @@ void DNN::Matrix::setCLSetup(std::shared_ptr<CLMatrixSetup> newSetup) {
 }
 
 // ENH : Should result matrix be checked ??
-void DNN::Matrix::opAdd(Matrix &A, Matrix &B, Matrix &R) {
+void DNN::Matrix::opAdd(const Matrix &A, const Matrix &B, Matrix &R) {
     assert(A.getRowCount() == B.getRowCount() && A.getColumnCount() == B.getColumnCount());
 
     CLMatrixSetup::AddKerType kernel((A.transpose == B.transpose) ? A.CLSetup->getKernel("matrix_addition") : A.CLSetup->getKernel("matrix_transAddition"));
     basicBinaryOp(A, B, R, A.transpose, A.rows, A.columns, kernel);
 }
 
-void DNN::Matrix::opSub(Matrix &A, Matrix &B, Matrix &R) {
+void DNN::Matrix::opSub(const Matrix &A, const Matrix &B, Matrix &R) {
     assert(A.getRowCount() == B.getRowCount() && A.getColumnCount() == B.getColumnCount());
 
     //Prepare result and transposition (no need for TS behavior, see constructors)
@@ -460,7 +471,7 @@ void DNN::Matrix::opSub(Matrix &A, Matrix &B, Matrix &R) {
     basicBinaryOp(A, B, R, A.transpose, A.rows, A.columns, kernel);
 }
 
-void DNN::Matrix::opMul(Matrix &A, Matrix &B, Matrix &R) {
+void DNN::Matrix::opMul(const Matrix &A, const Matrix &B, Matrix &R) {
     assert(A.isValid() && B.isValid());
     assert(A.getColumnCount() == B.getRowCount());
 
@@ -478,7 +489,7 @@ void DNN::Matrix::opMul(Matrix &A, Matrix &B, Matrix &R) {
     );
 }
 
-void DNN::Matrix::opHad(Matrix &A, Matrix &B, Matrix &R) {
+void DNN::Matrix::opHad(const Matrix &A, const Matrix &B, Matrix &R) {
     assert(A.getRowCount() == B.getRowCount() && A.getColumnCount() == B.getColumnCount());
 
     //Prepare result and transposition (no need for TS behavior, see constructors)
@@ -486,7 +497,7 @@ void DNN::Matrix::opHad(Matrix &A, Matrix &B, Matrix &R) {
     basicBinaryOp(A, B, R, A.transpose, A.rows, A.columns, kernel);
 }
 
-void DNN::Matrix::opOpp(Matrix &A, Matrix &R) {
+void DNN::Matrix::opOpp(const Matrix &A, Matrix &R) {
     //Prepare result (no need for TS behavior, see constructors)
     CLMatrixSetup::OppKerType kernel(A.CLSetup->getKernel("matrix_opposite"));
 
@@ -511,7 +522,7 @@ DNN::Matrix::Matrix(int nbRow, int nbCol, cl::vector<float> *existingVector, std
     //Buffer side creation : no thread unsafe danger
 }
 
-void DNN::Matrix::manageBeforeReading(bool download) {
+void DNN::Matrix::manageBeforeReading(bool download) const {
     assert(isValid());
 
     //Data management
@@ -519,7 +530,7 @@ void DNN::Matrix::manageBeforeReading(bool download) {
     data->addBufferEvent();
 }
 
-void DNN::Matrix::manageBeforeComputation(cl::vector<cl::Event> &requiredEvents, bool includeUpload) {
+void DNN::Matrix::manageBeforeComputation(cl::vector<cl::Event> &requiredEvents, bool includeUpload) const {
     //Event management
     promptStateMutex.lock();
     if(TS_stateFlags & StateFlags::COMPUTATION_EXECUTING)
@@ -531,7 +542,7 @@ void DNN::Matrix::manageBeforeComputation(cl::vector<cl::Event> &requiredEvents,
         requiredEvents.push_back(TS_lastUploadEvent);
 }
 
-void DNN::Matrix::waitForExternal() {
+void DNN::Matrix::waitForExternal() const {
     if(!isValid()) return;
 
     cl::vector<cl::Event> events;
@@ -552,7 +563,7 @@ void DNN::Matrix::waitForExternal() {
     promptStateMutex.unlock();
 }
 
-void DNN::Matrix::waitForDownload() {
+void DNN::Matrix::waitForDownload() const {
     if(!isValid()) return;
 
     promptStateMutex.lock();
@@ -563,7 +574,7 @@ void DNN::Matrix::waitForDownload() {
     promptStateMutex.unlock();
 }
 
-void DNN::Matrix::waitForComputation() {
+void DNN::Matrix::waitForComputation() const {
     if(!isValid()) return;
 
     promptStateMutex.lock();
@@ -574,7 +585,7 @@ void DNN::Matrix::waitForComputation() {
     promptStateMutex.unlock();
 }
 
-void DNN::Matrix::waitForUpload() {
+void DNN::Matrix::waitForUpload() const {
     if(!isValid()) return;
 
     promptStateMutex.lock();
@@ -585,7 +596,7 @@ void DNN::Matrix::waitForUpload() {
     promptStateMutex.unlock();
 }
 
-void DNN::Matrix::safelyWaitForEvent(cl::Event &event, std::mutex &waitingMutex, bool relock) {
+void DNN::Matrix::safelyWaitForEvent(cl::Event &event, std::mutex &waitingMutex, bool relock) const {
     if(!isValid()) return;
 
     waitingMutex.lock();
@@ -597,7 +608,7 @@ void DNN::Matrix::safelyWaitForEvent(cl::Event &event, std::mutex &waitingMutex,
     if(relock) promptStateMutex.lock();
 }
 
-void DNN::Matrix::downloadData() {
+void DNN::Matrix::downloadData() const {
     if(!isValid() || data->TS_vector == nullptr) return;
 
     promptStateMutex.lock();
@@ -637,7 +648,7 @@ void DNN::Matrix::downloadData() {
     addDataCallbackTo(TS_lastDownloadEvent, downloadCallback, data);
 }
 
-void DNN::Matrix::uploadData() {
+void DNN::Matrix::uploadData() const {
     if(!isValid() || data->TS_buffer == nullptr) return;
 
     promptStateMutex.lock();

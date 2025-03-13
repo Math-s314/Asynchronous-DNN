@@ -13,33 +13,33 @@ namespace DNN {
         Vector(cl::vector<float> &&initializer, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
 
         //Affectation creation (behaves smartly...)
-        Vector(Vector  &toCopy);
+        Vector(const Vector  &toCopy);
         Vector(Vector &&toMove) noexcept;
-        Vector(Matrix  &toCopy);
+        Vector(const Matrix  &toCopy);
         Vector(Matrix &&toMove) noexcept;
         virtual ~Vector() = default;
         
         //Affectation operators
-        inline Vector &operator=(Vector  &toCopy)           { return *this = (Matrix  &) toCopy; }
-        inline Vector &operator=(Vector &&toMove) noexcept  { return *this = (Matrix &&) toMove; }
-        inline Vector &operator=(Matrix  &toCopy)           { this->Matrix::operator=((Matrix  &) toCopy); return *this; }
-        inline Vector &operator=(Matrix &&toMove) noexcept  { this->Matrix::operator=((Matrix &&) toMove); return *this; }
+        inline Vector &operator=(const Vector  &toCopy)           { return *this = (Matrix  &) toCopy; }
+        inline Vector &operator=(Vector       &&toMove) noexcept  { return *this = (Matrix &&) toMove; }
+        inline Vector &operator=(const Matrix  &toCopy)           { this->Matrix::operator=((Matrix  &) toCopy); return *this; }
+        inline Vector &operator=(Matrix       &&toMove) noexcept  { this->Matrix::operator=((Matrix &&) toMove); return *this; }
 
         //Public operations' library
-        Vector operator+(Vector &operand);
-        Vector operator-(Vector &operand);
-        Vector operator-();
+        Vector operator+(const Vector &operand) const;
+        Vector operator-(const Vector &operand) const;
+        Vector operator-()const;
 
-        Vector hadamardProduct(Vector &operand);
-        Vector executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel);
+        Vector hadamardProduct(const Vector &operand) const;
+        Vector executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel) const;
 
-        Matrix addOverMatrix(Matrix &operand);
-        Matrix subOverMatrix(Matrix &operand); 
+        Matrix addOverMatrix(const Matrix &operand) const;
+        Matrix subOverMatrix(const Matrix &operand) const;
 
         //Data access
         inline float &operator[](cl::size_type row) { return getLValueElement(row); }
-        inline float &getLValueElement(cl::size_type row) {return Matrix::getLValueElement(row, 0); }
-        inline float  getRValueElement(cl::size_type row) {return Matrix::getRValueElement(row, 0); }
+        inline float &getLValueElement(cl::size_type row)       {return Matrix::getLValueElement(row, 0); }
+        inline float  getRValueElement(cl::size_type row) const {return Matrix::getRValueElement(row, 0); }
 
     protected:
         Vector(int nbRow, cl::Buffer *existingBuffer       , std::shared_ptr<CLMatrixSetup> setup);  //Internal device side creation
@@ -51,12 +51,12 @@ namespace DNN {
         virtual void setCLSetup(std::shared_ptr<CLMatrixSetup> newSetup) override;
 
         //Operations' library (to allow any derived type as return without copy)
-        static void opAOM(Vector &A, Matrix &B, Matrix &R);
-        static void opSOM(Vector &A, Matrix &B, Matrix &R);
+        static void opAOM(const Vector &A, const Matrix &B, Matrix &R);
+        static void opSOM(const Vector &A, const Matrix &B, Matrix &R);
 
         friend Vector operator*(Matrix &AL, Vector &X);
     };
 
     //Other DNN operators
-    Vector operator*(Matrix &AL, Vector &X);
+    Vector operator*(const Matrix &AL, const Vector &X);
 }

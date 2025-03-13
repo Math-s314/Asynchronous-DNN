@@ -22,7 +22,7 @@ DNN::SquareMatrix::SquareMatrix(Matrix &&toMove) noexcept : Matrix(toMove) {
     SquareMatrix::setCLSetup(CLSetup);
 }
 
-DNN::SquareMatrix DNN::SquareMatrix::operator+(SquareMatrix &operand) {
+DNN::SquareMatrix DNN::SquareMatrix::operator+(const SquareMatrix &operand) const {
     SquareMatrix matrixResult(rows,
         new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns),
         CLSetup
@@ -32,7 +32,7 @@ DNN::SquareMatrix DNN::SquareMatrix::operator+(SquareMatrix &operand) {
     return matrixResult;
 }
 
-DNN::SquareMatrix DNN::SquareMatrix::operator-(SquareMatrix &operand) {
+DNN::SquareMatrix DNN::SquareMatrix::operator-(const SquareMatrix &operand) const {
     SquareMatrix matrixResult(rows,
         new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns),
         CLSetup
@@ -42,7 +42,7 @@ DNN::SquareMatrix DNN::SquareMatrix::operator-(SquareMatrix &operand) {
     return matrixResult;
 }
 
-DNN::SquareMatrix DNN::SquareMatrix::operator*(SquareMatrix &operand) {
+DNN::SquareMatrix DNN::SquareMatrix::operator*(const SquareMatrix &operand) const {
     SquareMatrix matrixResult(rows,
         new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns),
         CLSetup
@@ -52,7 +52,7 @@ DNN::SquareMatrix DNN::SquareMatrix::operator*(SquareMatrix &operand) {
     return matrixResult;
 }
 
-DNN::SquareMatrix DNN::SquareMatrix::operator^(int exp) {
+DNN::SquareMatrix DNN::SquareMatrix::operator^(int exp) const {
     SquareMatrix matrixResult(rows,
         new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns),
         CLSetup
@@ -69,7 +69,7 @@ DNN::SquareMatrix DNN::SquareMatrix::operator^(int exp) {
     
 }
 
-DNN::SquareMatrix DNN::SquareMatrix::operator-() {
+DNN::SquareMatrix DNN::SquareMatrix::operator-() const {
     SquareMatrix matrixResult(rows,
         new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns),
         CLSetup
@@ -79,7 +79,7 @@ DNN::SquareMatrix DNN::SquareMatrix::operator-() {
     return matrixResult;
 }
 
-DNN::SquareMatrix DNN::SquareMatrix::hadamardProduct(SquareMatrix &operand) {
+DNN::SquareMatrix DNN::SquareMatrix::hadamardProduct(const SquareMatrix &operand) const {
     SquareMatrix matrixResult(rows,
         new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns),
         CLSetup
@@ -89,7 +89,7 @@ DNN::SquareMatrix DNN::SquareMatrix::hadamardProduct(SquareMatrix &operand) {
     return matrixResult;
 }
 
-DNN::SquareMatrix DNN::SquareMatrix::executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel) {
+DNN::SquareMatrix DNN::SquareMatrix::executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel) const {
     assert(isValid());
 
     //Prepare result (no need for TS behavior, see constructors)
@@ -117,7 +117,7 @@ DNN::SquareMatrix::SquareMatrix(int N, cl::vector<float> *existingVector, std::s
     SquareMatrix::setCLSetup(CLSetup);
 }
 
-void DNN::SquareMatrix::opPow(SquareMatrix &A, unsigned int exp, SquareMatrix &R) {
+void DNN::SquareMatrix::opPow(const SquareMatrix &A, unsigned int exp, SquareMatrix &R) {
     //We treat small case specifically to avoid useless copies...
     if(exp == 0) { R = identity(A.rows, A.CLSetup); return; }
     if(exp == 1) { R = A; return; }
