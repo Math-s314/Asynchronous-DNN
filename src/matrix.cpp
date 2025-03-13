@@ -1,7 +1,7 @@
 #include "matrix.hpp"
 
-std::atomic<int> DNN::BufferLinkManager::DEBUG_created = 0;   
-std::atomic<int> DNN::BufferLinkManager::DEBUG_destroyed = 0;
+std::atomic<int> DNN::BufferLinkManager::DEBUG_created(0);
+std::atomic<int> DNN::BufferLinkManager::DEBUG_destroyed(0);
 
 std::shared_ptr<DNN::CLMatrixSetup> DNN::CLMatrixSetup::defaultCLSetup;
 
@@ -30,14 +30,14 @@ DNN::CLMatrixSetup::CLMatrixSetup(cl::Context _context) : context(_context), que
 DNN::CLMatrixSetup::CLMatrixSetup(cl::Context _context, cl::CommandQueue _queue) : context(_context), queue(_queue)  {}
 
 bool DNN::CLMatrixSetup::addKernelsFromSource(const char *file, cl::vector<cl::string> kernels, int8_t libCode) {
-    if(libCode & includedLibrairies) return false;
+    if(libCode & includedLibraries) return false;
 
     cl::Program program(context, cl::util::read_text_file(file) , true );
     for(auto key : kernels) {
         if(internalKernelLib.find(key) == internalKernelLib.end())
             internalKernelLib[key] = cl::Kernel(program, key);
     }
-    includedLibrairies |= libCode;
+    includedLibraries |= libCode;
     return true;
 }
 
@@ -60,8 +60,7 @@ cl::string DNN::VectorisedFunction::prepareString(const cl::string &operation) {
     return preKernelStr + parsed + postKernelStr;
 }
 
-DNN::BufferLinkManager::~BufferLinkManager()
-{
+DNN::BufferLinkManager::~BufferLinkManager() {
     internalLinkMutex.lock();
     assert(TS_bufferAccess == 0 && TS_vectorAccess == 0 && TS_tobeDeleted);
     ++DEBUG_destroyed;
@@ -73,7 +72,7 @@ DNN::BufferLinkManager::~BufferLinkManager()
 }
 
 void DNN::BufferLinkManager::registerForDeletion() {
-    std::lock_guard<std::recursive_mutex> lock(internalLinkMutex);
+    internalLinkMutex.lock();
 
     TS_tobeDeleted = true; 
     TS_holder = nullptr;
@@ -88,8 +87,12 @@ void DNN::BufferLinkManager::registerForDeletion() {
         TS_vector = nullptr;
     }
 
-    if(TS_bufferAccess == 0 && TS_vectorAccess == 0)
-        delete this;
+    if(TS_bufferAccess == 0 && TS_vectorAccess == 0) {
+        internalLinkMutex.unlock();
+        delete this; return; //Both instructions CANNOT be separated !!
+    }
+
+    internalLinkMutex.unlock();
 }
 
 void DNN::BufferLinkManager::waitForBufferEvents() {
@@ -112,19 +115,19 @@ DNN::Matrix::Matrix(int nbRow, int nbCol, float expr, std::shared_ptr<CLMatrixSe
     // - no thread unsafe danger.
 }
 
-DNN::Matrix::Matrix(const cl::vector<cl::vector<float>> &initialiser, bool tranposed, std::shared_ptr<CLMatrixSetup> setup) : rows(initialiser.size()), columns(initialiser[0].size()), transpose(tranposed),
+DNN::Matrix::Matrix(const cl::vector<cl::vector<float>> &initializer, bool transposed, std::shared_ptr<CLMatrixSetup> setup) : rows(initializer.size()), columns(initializer[0].size()), transpose(transposed),
     data(new BufferLinkManager(this)) {
     Matrix::setCLSetup(setup);
 
     bool _checkDim = true;
     for(int i = 1; i < rows; ++i)
-        if(initialiser[i].size() != columns) _checkDim = false;
+        if(initializer[i].size() != columns) _checkDim = false;
     assert(_checkDim);
 
     data->TS_vector = new cl::vector<float>(rows*columns);
     for(int i = 0; i < rows; ++i)
         for(int j = 0; j < columns; ++j)
-            (*data->TS_vector)[i*columns + j] = initialiser[i][j];
+            (*data->TS_vector)[i*columns + j] = initializer[i][j];
 
     TS_stateFlags |= StateFlags::DATA_UPLOADED;
     //Host side creation :
@@ -145,13 +148,7 @@ DNN::Matrix::~Matrix() {
     std::cout << "Destroy Matrix !!" << std::endl;
     if(data == nullptr) return;
 
-    data->registerForDeletion(); //Ensure that no thread own any of the matrix's mutexs.
-
-    //Useless but just in case...
-    promptStateMutex.unlock();
-    waitingUploadMutex.unlock();
-    waitingDownloadMutex.unlock();
-    waitingComputationMutex.unlock();
+    data->registerForDeletion(); //Ensure that no thread own any of the matrix's mutexes.
 }
 
 //ENH : Should we really delete all the previous data ??
@@ -171,7 +168,7 @@ DNN::Matrix &DNN::Matrix::operator=(Matrix &toCopy) {
     transpose = toCopy.transpose; //We keep the same internal representation of the matrix
     rows = toCopy.rows;
     columns = toCopy.columns;
-    this->setCLSetup(toCopy.CLSetup); //To ensure it calls the overrided function...
+    this->setCLSetup(toCopy.CLSetup); //To ensure it calls the override function...
 
     //Effective smart copy... (never copy both, if such a behaviour is wanted the user should use the static copy function)
     toCopy.promptStateMutex.lock();
@@ -297,19 +294,19 @@ DNN::Matrix &DNN::Matrix::operator=(Matrix &&toMove) noexcept {
         //External creation
         if(TS_stateFlags & (StateFlags::DATA_DOWNLOADING | StateFlags::EXTERNAL_DOWNLOADING)) { //Includes potential external download
             TS_stateFlags |= EXTERNAL_DOWNLOADING;
-            data->addVectorEvent(); //TODO : How to avoid relocking this mutex ??
-            addDataCallbackTo(TS_lastDownloadEvent, externaDownloadlCallback, data);
+            data->addVectorEvent(); //TODO : How to avoid locking this mutex ??
+            addDataCallbackTo(TS_lastDownloadEvent, externalDownloadCallback, data);
         }
         if(TS_stateFlags & (StateFlags::DATA_UPLOADING | StateFlags::EXTERNAL_UPLOADING)) { //Includes potential external upload
             TS_stateFlags |= EXTERNAL_UPLOADING;
-            data->addVectorEvent(); //TODO : How to avoid relocking this mutex ??
+            data->addVectorEvent(); //TODO : How to avoid locking this mutex ??
             addDataCallbackTo(TS_lastUploadEvent, externalUploadCallback, data);
         }
 
         //General TS changes
         TS_stateFlags &= oppFlag(StateFlags::INTERNAL_FLAGS);
         TS_stateFlags |= toMove.TS_stateFlags & StateFlags::INTERNAL_FLAGS;
-        TS_lastComputationEvent = (cl::Event &&) toMove.TS_lastComputationEvent; //Wil serve as deletion of the previous event
+        TS_lastComputationEvent = (cl::Event &&) toMove.TS_lastComputationEvent; //Will serve as deletion of the previous event
 
         data->TS_holder = this;
     }
@@ -406,7 +403,7 @@ float &DNN::Matrix::getLValueElement(cl::size_type row, cl::size_type col) {
     promptStateMutex.unlock();
     
     const size_t index = transpose ? col * columns + row : row * columns + col;
-    return (*data->TS_vector)[index]; //Thread safe because it can't be registred for deletion...
+    return (*data->TS_vector)[index]; //Thread safe because it can't be registered for deletion...
 }
 
 float DNN::Matrix::getRValueElement(cl::size_type row, cl::size_type col) {
@@ -414,7 +411,7 @@ float DNN::Matrix::getRValueElement(cl::size_type row, cl::size_type col) {
     waitForConstResults();
 
     const size_t index = transpose ? col * columns + row : row * columns + col;
-    return (*data->TS_vector)[index]; //Thread safe because it can't be registred for deletion...
+    return (*data->TS_vector)[index]; //Thread safe because it can't be registered for deletion...
 }
 
 void DNN::Matrix::askForResults() {
@@ -443,7 +440,13 @@ void DNN::Matrix::waitForConstResults() {
 
 void DNN::Matrix::setCLSetup(std::shared_ptr<CLMatrixSetup> newSetup) {
     newSetup->addKernelsFromSource(libFile, 
-        {"matrix_addition", "matrix_transAddition", "matrix_substraction", "matrix_transSubstraction", "matrix_product", "matrix_transLProduct", "matrix_transRProduct", "matrix_opposite"},
+        {
+            "matrix_addition", "matrix_transAddition",
+            "matrix_subtraction", "matrix_transSubtraction",
+            "matrix_product", "matrix_transLProduct", "matrix_transRProduct",
+            "matrix_hadamard", "matrix_transHadamard",
+            "matrix_opposite"
+        },
         libCode
     );
     CLSetup = newSetup;
@@ -462,8 +465,7 @@ void DNN::Matrix::opSub(Matrix &A, Matrix &B, Matrix &R) {
     assert(A.getRowCount() == B.getRowCount() && A.getColumnCount() == B.getColumnCount());
 
     //Prepare result and transposition (no need for TS behavior, see constructors)
-    CLMatrixSetup::SubKerType kernel((A.transpose == B.transpose) ? A.CLSetup->getKernel("matrix_substraction") : A.CLSetup->getKernel("matrix_transSubstraction"));
-
+    CLMatrixSetup::SubKerType kernel((A.transpose == B.transpose) ? A.CLSetup->getKernel("matrix_subtraction") : A.CLSetup->getKernel("matrix_transSubtraction"));
     basicBinaryOp(A, B, R, A.transpose, A.rows, A.columns, kernel);
 }
 
@@ -476,7 +478,7 @@ void DNN::Matrix::opMul(Matrix &A, Matrix &B, Matrix &R) {
         A.CLSetup->getKernel("matrix_product") : 
         A.transpose ? A.CLSetup->getKernel("matrix_transLProduct") : A.CLSetup->getKernel("matrix_transRProduct")
     );
-    R.transpose = A.transpose && B.transpose; //Avoids creating an useless variable...
+    R.transpose = A.transpose && B.transpose; //Avoids creating a useless variable...
 
     basicBinaryOp(A, B, R, R.transpose,
         R.transpose ? B.getColumnCount() : A.getRowCount(), 
@@ -611,18 +613,18 @@ void DNN::Matrix::downloadData() {
 
     //Event management
     std::lock_guard<std::recursive_mutex> lock(promptStateMutex);
-    cl::vector<cl::Event> dependences;
-    dependences.reserve(2);
+    cl::vector<cl::Event> dependencies;
+    dependencies.reserve(2);
 
     if(TS_stateFlags & StateFlags::EXTERNAL_DOWNLOADING)
-        dependences.push_back(TS_lastDownloadEvent);
+        dependencies.push_back(TS_lastDownloadEvent);
     if(TS_stateFlags & StateFlags::EXTERNAL_UPLOADING)
-        dependences.push_back(TS_lastUploadEvent);
+        dependencies.push_back(TS_lastUploadEvent);
 
     //OpenCL request
     CLSetup->getQueue().enqueueWriteBuffer(
         *data->TS_buffer, false, 0, sizeof(float)*rows*columns, 
-        (void *) data->TS_vector->data(), &dependences, 
+        (void *) data->TS_vector->data(), &dependencies,
         &TS_lastDownloadEvent //In this function the previous cl_event is correctly released...
     );
     TS_stateFlags &= oppFlag(StateFlags::EXTERNAL_DOWNLOADING);  //Only TS_lastDownloadEvent is modified...
@@ -650,25 +652,25 @@ void DNN::Matrix::uploadData() {
 
     //Event management
     std::lock_guard<std::recursive_mutex> lock(promptStateMutex);
-    cl::vector<cl::Event> dependences;
-    dependences.reserve(3);
+    cl::vector<cl::Event> dependencies;
+    dependencies.reserve(3);
 
     if(TS_stateFlags & StateFlags::COMPUTATION_EXECUTING)
-        dependences.push_back(TS_lastComputationEvent);
+        dependencies.push_back(TS_lastComputationEvent);
     else if(TS_stateFlags & StateFlags::DATA_DOWNLOADING) //Should NEVER happen...
-        dependences.push_back(TS_lastDownloadEvent);
+        dependencies.push_back(TS_lastDownloadEvent);
 
     if(TS_stateFlags & StateFlags::EXTERNAL_DOWNLOADING)
-        dependences.push_back(TS_lastDownloadEvent);
+        dependencies.push_back(TS_lastDownloadEvent);
     if(TS_stateFlags & StateFlags::EXTERNAL_UPLOADING) //Just to be clearer
-        dependences.push_back(TS_lastUploadEvent);
+        dependencies.push_back(TS_lastUploadEvent);
     else if(TS_lastUploadEvent.get() != nullptr) //To avoid waiting for twice the same event...
-        dependences.push_back(TS_lastUploadEvent);
+        dependencies.push_back(TS_lastUploadEvent); //TODO : This one is included in computation event nah ?
 
     //OpenCL request
     CLSetup->getQueue().enqueueReadBuffer(
         *data->TS_buffer, false, 0, sizeof(float)*rows*columns, 
-        (void *) data->TS_vector->data(), &dependences, 
+        (void *) data->TS_vector->data(), &dependencies,
         &TS_lastUploadEvent //In this function the previous cl_event is correctly released...
     );
     TS_stateFlags &= oppFlag(StateFlags::EXTERNAL_UPLOADING); //Only TS_lastUploadEvent is modified...
@@ -677,7 +679,7 @@ void DNN::Matrix::uploadData() {
     addDataCallbackTo(TS_lastUploadEvent, uploadCallback, data);
 }
 
-void DNN::Matrix::addDataCallbackTo(cl::Event &event, void (*cb)(cl_event, cl_int, void *), BufferLinkManager *arg) {
+void DNN::Matrix::addDataCallbackTo(cl::Event &event, void (CL_CALLBACK *cb)(cl_event, cl_int, void *), BufferLinkManager *arg) {
     clRetainEvent(event.get());
     event.setCallback(CL_COMPLETE, cb, (void *) arg);
 }
@@ -762,7 +764,7 @@ void CL_CALLBACK DNN::Matrix::readCallback(cl_event event, cl_int, void* _linkMa
     clReleaseEvent(event);
 }
 
-void CL_CALLBACK DNN::Matrix::externaDownloadlCallback(cl_event event, cl_int, void *_linkManager) {
+void CL_CALLBACK DNN::Matrix::externalDownloadCallback(cl_event event, cl_int, void *_linkManager) {
     BufferLinkManager *linkManager = (BufferLinkManager *) _linkManager;
 
     linkManager->internalLinkMutex.lock();
@@ -809,7 +811,7 @@ void CL_CALLBACK DNN::Matrix::externalUploadCallback(cl_event event, cl_int, voi
 }
 
 void CL_CALLBACK DNN::Matrix::checkDeletionForCallbacks(BufferLinkManager *linkManager, bool buffer, bool vector) {
-    std::lock_guard<std::recursive_mutex> lock(linkManager->internalLinkMutex);
+    linkManager->internalLinkMutex.lock();
     linkManager->TS_bufferAccess -= (buffer && linkManager->TS_bufferAccess > 0) ? 1 : 0;
     linkManager->TS_vectorAccess -= (vector && linkManager->TS_vectorAccess > 0) ? 1 : 0;
 
@@ -823,9 +825,12 @@ void CL_CALLBACK DNN::Matrix::checkDeletionForCallbacks(BufferLinkManager *linkM
             linkManager->TS_vector = nullptr;
         }
         if(linkManager->TS_vectorAccess == 0 && linkManager->TS_bufferAccess == 0) {
-            delete linkManager;
+            linkManager->internalLinkMutex.unlock();
+            delete linkManager; return;
         }
     }
+
+    linkManager->internalLinkMutex.unlock();
 }
 
 std::ostream &DNN::operator<<(std::ostream &output, DNN::Matrix &matrix) {

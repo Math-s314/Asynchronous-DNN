@@ -19,7 +19,7 @@ kernel void matrix_transAddition(global float *A, global float *B, global float 
   R[i*N+j] = A[i*N+j] + B[j*M+i];
 }
 
-kernel void matrix_substraction(global float *A, global float *B, global float *R) {
+kernel void matrix_subtraction(global float *A, global float *B, global float *R) {
   const int N = get_global_size(1);
   const int i = get_global_id(0);
   const int j = get_global_id(1);
@@ -27,7 +27,7 @@ kernel void matrix_substraction(global float *A, global float *B, global float *
   R[i*N+j] = A[i*N+j] - B[i*N+j];
 }
 
-kernel void matrix_transSubstraction(global float *A, global float *B, global float *R) {
+kernel void matrix_transSubtraction(global float *A, global float *B, global float *R) {
   const int M = get_global_size(0);
   const int N = get_global_size(1);
   const int i = get_global_id(0);

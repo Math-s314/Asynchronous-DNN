@@ -60,7 +60,7 @@ kernel void vector_transAdditionOM(global float *v, global float *A, global floa
   R[i*N+j] = A[j*M+i] + v[i];
 }
 
-kernel void vector_substractionOM(global float *v, global float *A, global float *R) {
+kernel void vector_subtractionOM(global float *v, global float *A, global float *R) {
   const int N = get_global_size(1);
   const int i = get_global_id(0);
   const int j = get_global_id(1);
@@ -68,7 +68,7 @@ kernel void vector_substractionOM(global float *v, global float *A, global float
   R[i*N+j] = A[i*N+j] - v[i];
 }
 
-kernel void vector_transSubstractionOM(global float *v, global float *A, global float *R) {
+kernel void vector_transSubtractionOM(global float *v, global float *A, global float *R) {
   const int M = get_global_size(0);
   const int N = get_global_size(1);
   const int i = get_global_id(0);

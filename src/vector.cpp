@@ -4,11 +4,11 @@ DNN::Vector::Vector(int nbRow, float expr, std::shared_ptr<CLMatrixSetup> setup)
     Vector::setCLSetup(CLSetup);
 }
 
-DNN::Vector::Vector(const cl::vector<float> &initialiser, std::shared_ptr<CLMatrixSetup> setup) : Matrix(initialiser.size(), 1, new cl::vector<float>(initialiser), setup) {
+DNN::Vector::Vector(const cl::vector<float> &initializer, std::shared_ptr<CLMatrixSetup> setup) : Matrix(initializer.size(), 1, new cl::vector<float>(initializer), setup) {
     Vector::setCLSetup(CLSetup);
 }
 
-DNN::Vector::Vector(cl::vector<float> &&initialiser, std::shared_ptr<CLMatrixSetup> setup) : Matrix(initialiser.size(), 1, new cl::vector<float>((cl::vector<float> &&) initialiser), setup) {
+DNN::Vector::Vector(cl::vector<float> &&initializer, std::shared_ptr<CLMatrixSetup> setup) : Matrix(initializer.size(), 1, new cl::vector<float>((cl::vector<float> &&) initializer), setup) {
     Vector::setCLSetup(CLSetup);
 }
 
@@ -78,7 +78,7 @@ DNN::Matrix DNN::Vector::subOverMatrix(Matrix &operand) {
 
 void DNN::Vector::setCLSetup(std::shared_ptr<CLMatrixSetup> newSetup) {
     newSetup->addKernelsFromSource(libFile, 
-        {"vector_additionOM", "vector_transAdditionOM", "vector_substractionOM", "vector_transSubstractionOM"},
+        {"vector_additionOM", "vector_transAdditionOM", "vector_subtractionOM", "vector_transSubtractionOM"},
         libCode
     );
     Matrix::setCLSetup(newSetup);
@@ -104,7 +104,7 @@ void DNN::Vector::opSOM(Vector &A, Matrix &B, Matrix &R) {
     assert(A.getRowCount() == B.getRowCount());
 
     //Prepare result and transposition (no need for TS behavior, see constructors)
-    CLMatrixSetup::AddKerType kernel(B.getTranspose() ? A.CLSetup->getKernel("vector_substractionOM") : A.CLSetup->getKernel("vector_transSubstractionOM"));
+    CLMatrixSetup::AddKerType kernel(B.getTranspose() ? A.CLSetup->getKernel("vector_subtractionOM") : A.CLSetup->getKernel("vector_transSubtractionOM"));
     basicBinaryOp(A, B, R, false, B.getRowCount(), B.getColumnCount(), kernel);
 }
 

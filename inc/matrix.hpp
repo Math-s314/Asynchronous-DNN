@@ -1,7 +1,5 @@
 #pragma once
 
-#define CL_HPP_ENABLE_EXCEPTIONS
-#define CL_HPP_TARGET_OPENCL_VERSION 210
 #include <CL/opencl.hpp>
 #include <CL/Utils/Utils.hpp>
 
@@ -49,7 +47,7 @@ namespace DNN {
         cl::CommandQueue queue;
 
         std::unordered_map<cl::string, cl::Kernel> internalKernelLib;
-        uint8_t includedLibrairies = 0;
+        uint8_t includedLibraries = 0;
 
         //Default singleton management
         CLMatrixSetup();
@@ -94,8 +92,8 @@ namespace DNN {
         mutable volatile unsigned long long TS_vectorAccess = 0;
 
         Matrix *TS_holder                      = nullptr;
-        cl::Buffer * volatile TS_buffer        = nullptr; //TS unless registred for deletion...
-        cl::vector<float> * volatile TS_vector = nullptr; //TS unless registred for deletion...
+        cl::Buffer * volatile TS_buffer        = nullptr; //TS unless registered for deletion...
+        cl::vector<float> * volatile TS_vector = nullptr; //TS unless registered for deletion...
 
         //The matrix is in charge of locking this mutex when making direct access...
         std::recursive_mutex internalLinkMutex;
@@ -112,7 +110,7 @@ namespace DNN {
         //Host side creation
         Matrix() = delete; //Dimensions must be fixed...
         Matrix(int nbRow = 0, int nbCol = 0, float expr = 0.0, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
-        Matrix(const cl::vector<cl::vector<float>> &initialiser, bool transposed = false, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
+        Matrix(const cl::vector<cl::vector<float>> &initializer, bool transposed = false, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
 
         //Affectation creation (behaves smartly...)
         Matrix(Matrix  &toCopy);
@@ -137,7 +135,7 @@ namespace DNN {
 
         Matrix executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel);
 
-        //Data access (we dont want them to be virtual : adapted return type and parameters)
+        //Data access (we don't want them to be virtual : adapted return type and parameters)
         virtual inline int  getRowCount()    const {return transpose ? columns : rows; }
         virtual inline int  getColumnCount() const {return transpose ? rows : columns; }
         virtual inline bool getTranspose()   const { return transpose; }
@@ -199,14 +197,14 @@ namespace DNN {
         std::shared_ptr<CLMatrixSetup> CLSetup = nullptr;
 
         //OpenCL Callbacks
-        static void addDataCallbackTo(cl::Event &event, void (* cb) (cl_event, cl_int, void *), BufferLinkManager *arg);
+        static void addDataCallbackTo(cl::Event &event, void (CL_CALLBACK* cb) (cl_event, cl_int, void *), BufferLinkManager *arg);
 
         //TODO : For all callback affecting flags -> the code is the same, make a specific function...
         static void CL_CALLBACK computationCallback(cl_event event, cl_int, void* _linkManager);//Release the event
         static void CL_CALLBACK downloadCallback(cl_event event, cl_int, void* _linkManager);//Release the event
         static void CL_CALLBACK uploadCallback(cl_event event, cl_int, void* _linkManager);//Release the event
         static void CL_CALLBACK readCallback(cl_event event, cl_int, void* _linkManager);//Release the event
-        static void CL_CALLBACK externaDownloadlCallback(cl_event event, cl_int, void* _linkManager);
+        static void CL_CALLBACK externalDownloadCallback(cl_event event, cl_int, void* _linkManager);
         static void CL_CALLBACK externalUploadCallback(cl_event event, cl_int, void* _linkManager);
         static void CL_CALLBACK checkDeletionForCallbacks(BufferLinkManager *linkManager, bool buffer, bool vector);
 
@@ -326,4 +324,4 @@ namespace DNN {
         A.promptStateMutex.unlock();
         B.promptStateMutex.unlock();
     }
-};
+}

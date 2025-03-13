@@ -3,14 +3,14 @@
 #include "matrix.hpp"
 
 namespace DNN {
-    //This class does not garanty that transpose = false (it is an internal thing we do not care about)
+    //This class does not guaranty that transpose = false (it is an internal thing we do not care about)
     class Vector : public Matrix {
     public :
         //Host side creation
         Vector() = delete;
-        Vector(int nbRow, float expr = 0.0, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
-        Vector(const cl::vector<float> &initialiser, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
-        Vector(cl::vector<float> &&initialiser, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
+        explicit Vector(int nbRow, float expr = 0.0, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
+        Vector(const cl::vector<float> &initializer, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
+        Vector(cl::vector<float> &&initializer, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
 
         //Affectation creation (behaves smartly...)
         Vector(Vector  &toCopy);
@@ -56,4 +56,4 @@ namespace DNN {
 
     //Other DNN operators
     Vector operator*(Matrix &AL, Vector &X);
-};
+}
