@@ -2,10 +2,9 @@ cmake_minimum_required(VERSION 3.30)
 project(OpenCLTest)
 
 set(CMAKE_CXX_STANDARD 14)
-include_directories(inc)
 
-list(APPEND CMAKE_INSTALL_PREFIX "$ENV{OpenCLRoot}")
-find_package(OpenCL CONFIG REQUIRED)
+include_directories(inc)
+find_package(OpenCL PATHS "$ENV{OpenCLDir}" NO_DEFAULT_PATH CONFIG REQUIRED)
 
 add_executable(OpenCLTest
     inc/deep_network.hpp

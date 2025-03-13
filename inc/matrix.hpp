@@ -124,14 +124,14 @@ namespace DNN {
         Matrix operator+(Matrix &operand); //ENH : Add rvalue version ?
         Matrix operator-(Matrix &operand);
         Matrix operator*(Matrix &operand);
-        
+        Matrix operator-();
+
+        Matrix hadamardProduct(Matrix &operand);
         //ENH : Add new operators...
         // Matrix operator^(int power);
         // Matrix operator+(float scalar);
         // Matrix operator-(float scalar);
         // Matrix operator*(float scalar);
-
-        Matrix operator-();
 
         Matrix executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel);
 
@@ -149,7 +149,7 @@ namespace DNN {
         void askForResults();// Ask for upload if not uploaded
         void waitForResults(); //Ask for upload if not uploaded and wait for it
         void waitForConstResults();
-        
+
         inline bool areComputationsFinished() 
             { return TS_stateFlags & StateFlags::COMPUTATION_EXECUTED; }
         inline bool areResultsAvailable() 
@@ -163,17 +163,20 @@ namespace DNN {
         static void opAdd(Matrix &A, Matrix &B, Matrix &R);
         static void opSub(Matrix &A, Matrix &B, Matrix &R);
         static void opMul(Matrix &A, Matrix &B, Matrix &R);
+        static void opHad(Matrix &A, Matrix &B, Matrix &R);
         static void opOpp(Matrix &A, Matrix &R);
 
-        template<typename... Ts>
+        template<typename... Ts> //WARNING : Does not take in account reading events for R !!
         static void basicUnaryOp(Matrix &A, Matrix &R, bool transpose, int rows, int columns, cl::KernelFunctor<cl::Buffer &, cl::Buffer &, Ts...> &kernel, Ts... args);
-        template<typename... Ts>
+        template<typename... Ts> //WARNING : Does not take in account reading events for R !!
         static void basicBinaryOp(Matrix &A, Matrix &B, Matrix &R, bool transpose, int rows, int columns, cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &, Ts...> &kernel, Ts... args);
 
         //Automatic data management
         Matrix(int nbRow, int nbCol, cl::Buffer *existingBuffer       , std::shared_ptr<CLMatrixSetup> setup);  //Internal device side creation
         Matrix(int nbRow, int nbCol, cl::vector<float> *existingVector, std::shared_ptr<CLMatrixSetup> setup);  //Internal host side creation (for derived classes)
-        void mangageBeforeComputation(cl::vector<cl::Event> &requiredEvents);
+
+        void manageBeforeReading(bool download = true);
+        void manageBeforeComputation(cl::vector<cl::Event> &requiredEvents, bool includeUpload = false);
 
         void waitForExternal();
         void waitForDownload();
@@ -250,6 +253,7 @@ namespace DNN {
 
         friend class VectorisedFunction;
         friend class Vector;
+        friend class SquareMatrix;
     };
 
     //Other operators for the Matrix class
@@ -259,19 +263,20 @@ namespace DNN {
     //Templates' definition
     template <typename... Ts>
     inline void Matrix::basicUnaryOp(Matrix &A, Matrix &R, bool transpose, int rows, int columns, cl::KernelFunctor<cl::Buffer &, cl::Buffer &, Ts...> &kernel, Ts... args) {
-        assert(A.isValid());
-
-        R.TS_stateFlags &= oppFlag(StateFlags::DATA_UPLOADED);
-        R.TS_stateFlags |= StateFlags::COMPUTATION_EXECUTING | StateFlags::DATA_DOWNLOADED;
-        R.transpose = transpose;
-        R.rows      = rows;
-        R.columns   = columns;
-        R.data->addBufferEvent();
-
-        //Prepare operands
+        //Prepare events
         cl::vector<cl::Event> events;
-        events.reserve(2);
-        A.mangageBeforeComputation(events); //WARNING : It locks the promptMutex !!!!
+        events.reserve(3);
+        A.manageBeforeReading();
+        R.data->addBufferEvent();
+        A.manageBeforeComputation(events); //WARNING : It locks the promptMutex !!!!
+        R.manageBeforeComputation(events, true);
+
+        //Prepare result
+        R.TS_stateFlags &= oppFlag(StateFlags::INTERNAL_FLAGS);
+        R.TS_stateFlags |= StateFlags::COMPUTATION_EXECUTING | StateFlags::DATA_DOWNLOADED;
+        R.transpose      = transpose;
+        R.rows           = rows;
+        R.columns        = columns;
 
         //Actual computations...
         std::lock_guard<std::recursive_mutex> lockRes(R.promptStateMutex);
@@ -287,24 +292,27 @@ namespace DNN {
         addDataCallbackTo(R.TS_lastComputationEvent, computationCallback, R.data);
 
         A.promptStateMutex.unlock();
+        R.promptStateMutex.unlock();
     }
 
     template <typename... Ts>
     inline void Matrix::basicBinaryOp(Matrix &A, Matrix &B, Matrix &R, bool transpose, int rows, int columns, cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &, Ts...> &kernel, Ts... args) {
-        assert(A.isValid() && B.isValid());
+        //Prepare operands
+        cl::vector<cl::Event> events;
+        events.reserve(4);
+        A.manageBeforeReading();
+        B.manageBeforeReading();
+        R.data->addBufferEvent();
+        A.manageBeforeComputation(events); //WARNING : It locks the promptMutex !!!!
+        B.manageBeforeComputation(events);
+        R.manageBeforeComputation(events, true);
 
-        R.TS_stateFlags &= oppFlag(StateFlags::DATA_UPLOADED);
+        //Prepare result
+        R.TS_stateFlags &= oppFlag(StateFlags::INTERNAL_FLAGS);
         R.TS_stateFlags |= StateFlags::COMPUTATION_EXECUTING | StateFlags::DATA_DOWNLOADED;
         R.transpose = transpose;
         R.rows      = rows;
         R.columns   = columns;
-        R.data->addBufferEvent();
-
-        //Prepare operands
-        cl::vector<cl::Event> events;
-        events.reserve(2);
-        A.mangageBeforeComputation(events); //WARNING : It locks the promptMutex !!!!
-        B.mangageBeforeComputation(events);
 
         //Actual computations...
         std::lock_guard<std::recursive_mutex> lockRes(R.promptStateMutex);
@@ -323,5 +331,6 @@ namespace DNN {
 
         A.promptStateMutex.unlock();
         B.promptStateMutex.unlock();
+        R.promptStateMutex.unlock();
     }
 }

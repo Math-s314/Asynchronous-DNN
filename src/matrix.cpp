@@ -183,15 +183,17 @@ DNN::Matrix &DNN::Matrix::operator=(Matrix &toCopy) {
         
         /// Mimic computation from now...
 
-        data->TS_buffer =  new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns);
-        TS_stateFlags |= StateFlags::COMPUTATION_EXECUTING | StateFlags::DATA_DOWNLOADED;
-        data->addBufferEvent();
-
         cl::vector<cl::Event> events;
         events.reserve(1);
-        toCopy.mangageBeforeComputation(events); //WARNING : It locks the promptMutex !!!!
+        toCopy.manageBeforeReading();
+        data->addBufferEvent();
 
-        std::lock_guard<std::recursive_mutex> lockRes(promptStateMutex);
+        toCopy.manageBeforeComputation(events); //WARNING : It locks the promptMutex !!!!
+        manageBeforeComputation(events, true); // ENH : In this context it is mainly useless...
+
+        data->TS_buffer =  new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns);
+        TS_stateFlags |= StateFlags::COMPUTATION_EXECUTING | StateFlags::DATA_DOWNLOADED;
+
         CLSetup->getQueue().enqueueCopyBuffer(
             *toCopy.data->TS_buffer, *data->TS_buffer,
             0, 0, sizeof(float)*rows*columns, 
@@ -203,6 +205,7 @@ DNN::Matrix &DNN::Matrix::operator=(Matrix &toCopy) {
         addDataCallbackTo(TS_lastComputationEvent, computationCallback, data);
 
         toCopy.promptStateMutex.unlock();
+        promptStateMutex.unlock();
     }
     else assert(false); //Invalid state
 
@@ -217,7 +220,7 @@ DNN::Matrix &DNN::Matrix::operator=(Matrix &&toMove) noexcept {
     transpose = toMove.transpose; //We keep the same internal representation of the matrix
     rows = toMove.rows;
     columns = toMove.columns;
-    this->setCLSetup(toMove.CLSetup); //To ensure it calls the overrided function...
+    this->setCLSetup(toMove.CLSetup); //To ensure it calls the override function...
 
     //Zero case : me or you (steal, complete steal)
     if(!isValid()) {
@@ -356,6 +359,16 @@ DNN::Matrix DNN::Matrix::operator-() {
     return matrixResult;
 }
 
+DNN::Matrix DNN::Matrix::hadamardProduct(Matrix &operand) {
+    Matrix matrixResult(rows, columns,
+        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns),
+        CLSetup
+    );
+    opHad(*this, operand, matrixResult);
+
+    return matrixResult;
+}
+
 DNN::Matrix DNN::Matrix::executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel) {
     assert(isValid());
 
@@ -364,28 +377,7 @@ DNN::Matrix DNN::Matrix::executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffe
         new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns),
         CLSetup
     );
-    matrixResult.TS_stateFlags |= StateFlags::COMPUTATION_EXECUTING;
-    matrixResult.transpose = transpose;
-    matrixResult.data->addBufferEvent();
-
-    //Prepare operands
-    cl::vector<cl::Event> events;
-    events.reserve(2);
-    mangageBeforeComputation(events); //WARNING : It locks the promptMutex !!!!
-
-    //Actual computations...
-    std::lock_guard<std::recursive_mutex> lockRes(matrixResult.promptStateMutex);
-    matrixResult.TS_lastComputationEvent = kernel( //Here the previous cl_event will be correctly released...
-        cl::EnqueueArgs(CLSetup->getQueue(), events, cl::NDRange(rows, columns)),
-        *data->TS_buffer,
-        *matrixResult.data->TS_buffer
-    );
-
-    //Callbacks
-    addDataCallbackTo(matrixResult.TS_lastComputationEvent, readCallback, data);
-    addDataCallbackTo(matrixResult.TS_lastComputationEvent, computationCallback, matrixResult.data);
-
-    promptStateMutex.unlock();
+    basicUnaryOp(*this, matrixResult, transpose, rows, columns, kernel);
 
     return matrixResult;
 }
@@ -461,7 +453,6 @@ void DNN::Matrix::opAdd(Matrix &A, Matrix &B, Matrix &R) {
 }
 
 void DNN::Matrix::opSub(Matrix &A, Matrix &B, Matrix &R) {
-    assert(A.isValid() && B.isValid());
     assert(A.getRowCount() == B.getRowCount() && A.getColumnCount() == B.getColumnCount());
 
     //Prepare result and transposition (no need for TS behavior, see constructors)
@@ -485,6 +476,14 @@ void DNN::Matrix::opMul(Matrix &A, Matrix &B, Matrix &R) {
         R.transpose ? A.getRowCount() : B.getColumnCount(), 
         kernel, A.getColumnCount()
     );
+}
+
+void DNN::Matrix::opHad(Matrix &A, Matrix &B, Matrix &R) {
+    assert(A.getRowCount() == B.getRowCount() && A.getColumnCount() == B.getColumnCount());
+
+    //Prepare result and transposition (no need for TS behavior, see constructors)
+    CLMatrixSetup::SubKerType kernel((A.transpose == B.transpose) ? A.CLSetup->getKernel("matrix_hadamard") : A.CLSetup->getKernel("matrix_transHadamard"));
+    basicBinaryOp(A, B, R, A.transpose, A.rows, A.columns, kernel);
 }
 
 void DNN::Matrix::opOpp(Matrix &A, Matrix &R) {
@@ -512,19 +511,24 @@ DNN::Matrix::Matrix(int nbRow, int nbCol, cl::vector<float> *existingVector, std
     //Buffer side creation : no thread unsafe danger
 }
 
-void DNN::Matrix::mangageBeforeComputation(cl::vector<cl::Event> &requiredEvents) {
+void DNN::Matrix::manageBeforeReading(bool download) {
     assert(isValid());
 
     //Data management
-    downloadData();
+    if(download) downloadData();
     data->addBufferEvent();
+}
 
+void DNN::Matrix::manageBeforeComputation(cl::vector<cl::Event> &requiredEvents, bool includeUpload) {
     //Event management
     promptStateMutex.lock();
     if(TS_stateFlags & StateFlags::COMPUTATION_EXECUTING)
         requiredEvents.push_back(TS_lastComputationEvent);
     else if(TS_stateFlags & StateFlags::DATA_DOWNLOADING)
         requiredEvents.push_back(TS_lastDownloadEvent);
+
+    if(includeUpload && (TS_stateFlags & StateFlags::DATA_UPLOADING))
+        requiredEvents.push_back(TS_lastUploadEvent);
 }
 
 void DNN::Matrix::waitForExternal() {
@@ -834,15 +838,23 @@ void CL_CALLBACK DNN::Matrix::checkDeletionForCallbacks(BufferLinkManager *linkM
 }
 
 std::ostream &DNN::operator<<(std::ostream &output, DNN::Matrix &matrix) {
+    const char fill = output.fill();
+    const std::streamsize precision = output.precision();
+    const std::streamsize width = output.width() > precision ? output.width() : precision + 5;
+
+    matrix.waitForConstResults();
+
     for(int i = 0; i < matrix.getRowCount(); ++i) {
     for(int j = 0; j < matrix.getColumnCount(); ++j) {
         if(j != 0) output << ' ';
-        output << std::setw(10) << std::setfill(' ') 
-            << std::fixed << std::showpoint << std::setprecision(2) 
+        output << std::setw(width) << std::setfill(fill)
+            << std::fixed << std::showpoint << std::setprecision(precision)
             << matrix.getRValueElement(i, j);
         }
         output << '\n';
     }
     output << std::endl;
+    output.width(0);
+
     return output;
 }

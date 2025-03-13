@@ -30,6 +30,9 @@ namespace DNN {
         Vector operator-(Vector &operand);
         Vector operator-();
 
+        Vector hadamardProduct(Vector &operand);
+        Vector executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel);
+
         Matrix addOverMatrix(Matrix &operand);
         Matrix subOverMatrix(Matrix &operand); 
 
@@ -38,14 +41,14 @@ namespace DNN {
         inline float &getLValueElement(cl::size_type row) {return Matrix::getLValueElement(row, 0); }
         inline float  getRValueElement(cl::size_type row) {return Matrix::getRValueElement(row, 0); }
 
-        //Calculation management
-        static constexpr uint8_t libCode = 1 << 1;
-        static constexpr char libFile[] = "ocl/vector.ocl";
-
-        virtual void setCLSetup(std::shared_ptr<CLMatrixSetup> newSetup) override;
     protected:
         Vector(int nbRow, cl::Buffer *existingBuffer       , std::shared_ptr<CLMatrixSetup> setup);  //Internal device side creation
         Vector(int nbRow, cl::vector<float> *existingVector, std::shared_ptr<CLMatrixSetup> setup);  //Internal host side creation (for derived classes)
+
+        //Calculation management
+        static constexpr uint8_t libCode = 1 << 1;
+        static constexpr char libFile[] = "ocl/vector.ocl";
+        virtual void setCLSetup(std::shared_ptr<CLMatrixSetup> newSetup) override;
 
         //Operations' library (to allow any derived type as return without copy)
         static void opAOM(Vector &A, Matrix &B, Matrix &R);

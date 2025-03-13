@@ -27,8 +27,8 @@ DNN::Vector::Vector(Matrix &&toMove) noexcept : Matrix((Matrix &&) toMove) {
 }
 
 DNN::Vector DNN::Vector::operator+(Vector &operand) {
-    Vector vectorResult(rows,
-        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows),
+    Vector vectorResult(getRowCount(),
+        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*getRowCount()),
         CLSetup
     );
     opAdd(*this, operand, vectorResult);
@@ -37,8 +37,8 @@ DNN::Vector DNN::Vector::operator+(Vector &operand) {
 }
 
 DNN::Vector DNN::Vector::operator-(Vector &operand) {
-    Vector vectorResult(rows,
-        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows),
+    Vector vectorResult(getRowCount(),
+        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*getRowCount()),
         CLSetup
     );
     opSub(*this, operand, vectorResult);
@@ -47,11 +47,34 @@ DNN::Vector DNN::Vector::operator-(Vector &operand) {
 }
 
 DNN::Vector DNN::Vector::operator-() {
-    Vector vectorResult(rows,
-        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows),
+    Vector vectorResult(getRowCount(),
+        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*getRowCount()),
         CLSetup
     );
     opOpp(*this, vectorResult);
+
+    return vectorResult;
+}
+
+DNN::Vector DNN::Vector::hadamardProduct(Vector &operand) {
+    Vector vectorResult(getRowCount(),
+        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*getRowCount()),
+        CLSetup
+    );
+    opHad(*this, operand, vectorResult);
+
+    return vectorResult;
+}
+
+DNN::Vector DNN::Vector::executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel) {
+    assert(isValid());
+
+    //Prepare result (no need for TS behavior, see constructors)
+    Vector vectorResult(getRowCount(),
+        new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*getRowCount()),
+        CLSetup
+    );
+    basicUnaryOp(*this, vectorResult, transpose, rows, columns, kernel);
 
     return vectorResult;
 }
