@@ -1,0 +1,127 @@
+/// Set of OpenCL kernels for the DNN::SquareMatrix class
+/// Each operation must be usable if one or both arguments are transposed (the result can be transposed too).
+/// Especially it is recommend to abuse of the fact that the transposition is an involution.
+
+/// Inversion kernels (in place only)
+
+kernel void square_inversionStepCheck(global float *R, global int *T, global int *P, const int N, const int step) {
+    float max = fabs(R[step*N+step]);
+    int maxId = step;
+
+    for(int i = step+1; i < N; ++i)
+        if(fabs(R[i*N+step]) > max) {
+            max = fabs(R[i*N+step]);
+            maxId = i;
+        }
+    T[0] = step; T[1] = maxId;
+    int temp = P[step]; //WARNING : P^-1 is therefore calculated !!!
+    P[step] = P[maxId]; P[maxId] = temp;
+}
+
+kernel void square_inversionStepMain(global float *R, const int N, const int step) {
+    const int i = get_global_id(0);
+    const int j = get_global_id(1);
+
+    R[i*N+j] -= R[i*N+step]*R[step*N+j];
+}
+
+kernel void square_inversionStepRow(global float *R, const int N, const int step) {
+    const int i = get_global_id(0);
+    const int j = get_global_id(1);
+
+    R[i*N + j] /= R[step*N + step];
+}
+
+kernel void square_inversionStepCol(global float *R, const int N, const int step) {
+    const int i = get_global_id(0);
+    const int j = get_global_id(1);
+
+    R[i*N + j] /= -R[step*N + step];
+}
+
+kernel void square_inversionStepFinal(global float *R, const int N, const int step) {
+    R[step*N + step] = 1/R[step*N + step];
+}
+
+/// Elementary operations kernels (in place only)
+
+kernel void square_rowDilation(global float *R, global float *lambda, global int *i) {
+    const int N = get_global_size(0);
+    const int j = get_global_id(0);
+
+    R[*i*N+j] *= *lambda;
+}
+
+kernel void square_colDilation(global float *R, global float *lambda, global int *j) {
+    const int N = get_global_size(0);
+    const int i = get_global_id(0);
+
+    R[i*N+*j] *= *lambda;
+}
+
+kernel void square_rowTransvection(global float *R, global float *lambda, global int *T) {
+    const int N = get_global_size(0);
+    const int j = get_global_id(0);
+
+    R[T[0]*N+j] += *lambda * R[T[1]*N+j];
+}
+
+kernel void square_colTransvection(global float *R, global float *lambda, global int *T) {
+    const int N = get_global_size(0);
+    const int i = get_global_id(0);
+
+    R[i*N+T[1]] += *lambda * R[i*N+T[0]];
+}
+
+kernel void square_rowTransposition(global float *R, global int *T) {
+    const int N = get_global_size(0);
+    const int j = get_global_id(0);
+
+    float temp = R[T[0]*N+j];
+    R[T[0]*N+j] = R[T[1]*N+j];
+    R[T[1]*N+j] = temp;
+}
+
+kernel void square_colTransposition(global float *R, global int *T) {
+    const int N = get_global_size(0);
+    const int i = get_global_id(0);
+
+    float temp = R[i*N+T[0]];
+    R[i*N+T[0]] = R[i*N+T[1]];
+    R[i*N+T[1]] = temp;
+}
+
+/// Permutations
+
+kernel void square_colPermutation(global float *A, global float *R, global int *permutation) {
+    const int N = get_global_size(0);
+    const int i = get_global_id(0);
+    const int j = get_global_id(1);
+
+    R[i*N+j] = A[i*N + permutation[j]];
+}
+
+kernel void square_rowPermutation(global float *A, global float *R, global int *permutation) {
+    const int N = get_global_size(0);
+    const int i = get_global_id(0);
+    const int j = get_global_id(1);
+
+    R[i*N+j] = A[permutation[i]*N + j];
+}
+
+kernel void square_colInvPermutation(global float *A, global float *R, global int *permutation) {
+    const int N = get_global_size(0);
+    const int i = get_global_id(0);
+    const int j = get_global_id(1);
+
+    R[i*N + permutation[j]] = A[i*N+j];
+}
+
+kernel void square_rowInvPermutation(global float *A, global float *R, global int *permutation) {
+    const int N = get_global_size(0);
+    const int i = get_global_id(0);
+    const int j = get_global_id(1);
+
+    R[permutation[i]*N + j] = A[i*N + j];
+}
+

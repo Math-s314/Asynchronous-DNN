@@ -224,107 +224,7 @@ DNN::Matrix &DNN::Matrix::operator=(const Matrix &toCopy) {
 }
 
 DNN::Matrix &DNN::Matrix::operator=(Matrix &&toMove) noexcept {
-    assert(getRowCount() == toMove.getRowCount() && getColumnCount() == toMove.getColumnCount());
-    if(this == &toMove || data == toMove.data || !toMove.isValid()) 
-        return *this;
-
-    transpose = toMove.transpose; //We keep the same internal representation of the matrix
-    rows = toMove.rows;
-    columns = toMove.columns;
-    this->setCLSetup(toMove.CLSetup); //To ensure it calls the override function...
-
-    //Zero case : me or you (steal, complete steal)
-    if(!isValid()) {
-        if(data != nullptr) data->registerForDeletion();
-        data = toMove.data; toMove.data = nullptr;
-
-        //TS part
-        std::lock_guard<std::recursive_mutex> lockData(data->internalLinkMutex);
-        std::lock_guard<std::recursive_mutex> lockThis(promptStateMutex); //Should be useless but good practice...
-        std::lock_guard<std::recursive_mutex> lockMove(toMove.promptStateMutex);
-
-        TS_stateFlags = toMove.TS_stateFlags;
-        TS_lastComputationEvent     = (cl::Event &&) toMove.TS_lastComputationEvent;
-        TS_lastUploadEvent          = (cl::Event &&) toMove.TS_lastUploadEvent;
-        TS_lastDownloadEvent        = (cl::Event &&) toMove.TS_lastDownloadEvent;
-
-        data->TS_holder = this;
-    }
-
-    //First case : complete move
-    else if(toMove.data->TS_buffer != nullptr && toMove.data->TS_vector != nullptr) {
-        //No need to protect as previous events and flags are erased...
-        data->registerForDeletion();
-        data = toMove.data; toMove.data = nullptr;
-
-        //TS part
-        std::lock_guard<std::recursive_mutex> lockData(data->internalLinkMutex);
-        std::lock_guard<std::recursive_mutex> lockThis(promptStateMutex);
-        std::lock_guard<std::recursive_mutex> lockMove(toMove.promptStateMutex);
-
-        TS_stateFlags = toMove.TS_stateFlags;
-        TS_lastComputationEvent = (cl::Event &&) toMove.TS_lastComputationEvent;
-        TS_lastComputationEvent = (cl::Event &&) toMove.TS_lastUploadEvent;
-        TS_lastComputationEvent = (cl::Event &&) toMove.TS_lastDownloadEvent;
-        
-        data->TS_holder = this;
-    }
-
-    //Second case : host side affectation (waits for everything)
-    else if(toMove.data->TS_vector != nullptr) {
-        waitForResults();
-        toMove.waitForResults(); //Just security should return immediately...
-
-        data->internalLinkMutex.lock();
-        toMove.data->internalLinkMutex.lock();
-        
-        delete data->TS_vector;
-        data->TS_vector = toMove.data->TS_vector;
-        toMove.data->TS_vector = nullptr;
-        data->TS_vectorAccess = 0;//Should be useless...
-        toMove.data->TS_vectorAccess = 0;
-
-        data->internalLinkMutex.unlock();
-        toMove.data->internalLinkMutex.unlock();
-        
-        std::lock_guard<std::recursive_mutex> lockThis(promptStateMutex);
-        TS_stateFlags &= oppFlag(StateFlags::INT_DOWNLOAD_FLAGS);
-        TS_stateFlags |= StateFlags::DATA_UPLOADED; //Should be useless...
-    }
-
-    //Third case : device side affectation (wait the less possible)
-    else if(toMove.data->TS_buffer != nullptr) {
-        //No need to protect as previous events and flags are erased...
-        toMove.data->TS_vector = data->TS_vector;
-        data->TS_vector = nullptr;
-        data->registerForDeletion(); //No issue with external actions as TS_vector is saved...
-        data = toMove.data; toMove.data = nullptr;
-
-        std::lock_guard<std::recursive_mutex> lockOldData(data->internalLinkMutex);
-        std::lock_guard<std::recursive_mutex> lockNewData(toMove.data->internalLinkMutex);
-        std::lock_guard<std::recursive_mutex> lockThis(promptStateMutex);
-        std::lock_guard<std::recursive_mutex> lockMove(toMove.promptStateMutex);
-
-        //External creation
-        if(TS_stateFlags & (StateFlags::DATA_DOWNLOADING | StateFlags::EXTERNAL_DOWNLOADING)) { //Includes potential external download
-            TS_stateFlags |= EXTERNAL_DOWNLOADING;
-            data->addVectorEvent(); //TODO : How to avoid locking this mutex ??
-            addDataCallbackTo(TS_lastDownloadEvent, externalDownloadCallback, data);
-        }
-        if(TS_stateFlags & (StateFlags::DATA_UPLOADING | StateFlags::EXTERNAL_UPLOADING)) { //Includes potential external upload
-            TS_stateFlags |= EXTERNAL_UPLOADING;
-            data->addVectorEvent(); //TODO : How to avoid locking this mutex ??
-            addDataCallbackTo(TS_lastUploadEvent, externalUploadCallback, data);
-        }
-
-        //General TS changes
-        TS_stateFlags &= oppFlag(StateFlags::INTERNAL_FLAGS);
-        TS_stateFlags |= toMove.TS_stateFlags & StateFlags::INTERNAL_FLAGS;
-        TS_lastComputationEvent = (cl::Event &&) toMove.TS_lastComputationEvent; //Will serve as deletion of the previous event
-
-        data->TS_holder = this;
-    }
-
+    move((Matrix &&) toMove, *this, false);
     return *this;
 }
 
@@ -847,6 +747,150 @@ void CL_CALLBACK DNN::Matrix::checkDeletionForCallbacks(BufferLinkManager *linkM
 
     linkManager->internalLinkMutex.unlock();
 }
+
+void DNN::Matrix::move(DNN::Matrix &&From, DNN::Matrix &To, bool forceNonBlocking) {
+    assert(From.getRowCount() == To.getRowCount() && From.getColumnCount() == To.getColumnCount());
+    if(&From == &To || From.data == To.data || !From.isValid()) return;
+
+    //Basic preparation of the movement : keeps same internal representation
+    To.transpose = From.transpose;
+    To.rows = From.rows;
+    To.columns = From.columns;
+    To.setCLSetup(From.CLSetup);
+
+    const bool buffer = From.data->TS_buffer != nullptr;
+    const bool vector = From.data->TS_vector != nullptr;
+    if(!To.isValid() || (buffer && vector) || (vector && forceNonBlocking)) { //First case : complete steal
+        if(To.data != nullptr) To.data->registerForDeletion();
+        To.data = From.data; From.data = nullptr;
+
+        //TS part
+        std::lock_guard<std::recursive_mutex> lockData(To.data->internalLinkMutex);
+        std::lock_guard<std::recursive_mutex> lockThis(To.promptStateMutex); //Should be useless but good practice...
+        std::lock_guard<std::recursive_mutex> lockMove(From.promptStateMutex);
+
+        To.TS_stateFlags = From.TS_stateFlags;
+        To.TS_lastComputationEvent     = (cl::Event &&) From.TS_lastComputationEvent;
+        To.TS_lastUploadEvent          = (cl::Event &&) From.TS_lastUploadEvent;
+        To.TS_lastDownloadEvent        = (cl::Event &&) From.TS_lastDownloadEvent;
+
+        To.data->TS_holder = &To;
+    }
+    else if(vector) { //Second case : host side affectation (waits for everything)
+        To.waitForResults();
+        From.waitForResults();
+
+        To.data->internalLinkMutex.lock();
+        From.data->internalLinkMutex.lock();
+
+        delete To.data->TS_vector;
+        To.data->TS_vector = From.data->TS_vector;
+        From.data->TS_vector = nullptr;
+        To.data->TS_vectorAccess = 0;//Should be useless...
+        From.data->TS_vectorAccess = 0;
+
+        To.data->internalLinkMutex.unlock();
+        From.data->internalLinkMutex.unlock();
+
+        std::lock_guard<std::recursive_mutex> lockThis(To.promptStateMutex);
+        To.TS_stateFlags &= oppFlag(StateFlags::INT_DOWNLOAD_FLAGS);
+        To.TS_stateFlags |= StateFlags::DATA_UPLOADED; //Should be useless...
+    }
+    else if(buffer) { //Third case : device side affectation (wait the less possible)
+        //No need to protect as previous events and flags are erased...
+        From.data->TS_vector = To.data->TS_vector;
+        To.data->TS_vector = nullptr;
+        To.data->registerForDeletion(); //No issue with external actions as TS_vector is saved...
+        To.data = From.data; From.data = nullptr;
+
+        std::lock_guard<std::recursive_mutex> lockOldData(To.data->internalLinkMutex);
+        std::lock_guard<std::recursive_mutex> lockNewData(From.data->internalLinkMutex);
+        std::lock_guard<std::recursive_mutex> lockThis(To.promptStateMutex);
+        std::lock_guard<std::recursive_mutex> lockMove(From.promptStateMutex);
+
+        //External creation
+        if(To.TS_stateFlags & (StateFlags::DATA_DOWNLOADING | StateFlags::EXTERNAL_DOWNLOADING)) { //Includes potential external download
+            To.TS_stateFlags |= EXTERNAL_DOWNLOADING;
+            To.data->addVectorEvent(); //TODO : How to avoid locking this mutex ??
+            addDataCallbackTo(To.TS_lastDownloadEvent, externalDownloadCallback, To.data);
+        }
+        if(To.TS_stateFlags & (StateFlags::DATA_UPLOADING | StateFlags::EXTERNAL_UPLOADING)) { //Includes potential external upload
+            To.TS_stateFlags |= EXTERNAL_UPLOADING;
+            To.data->addVectorEvent(); //TODO : How to avoid locking this mutex ??
+            addDataCallbackTo(To.TS_lastUploadEvent, externalUploadCallback, To.data);
+        }
+
+        //General TS changes
+        To.TS_stateFlags &= oppFlag(StateFlags::INTERNAL_FLAGS);
+        To.TS_stateFlags |= From.TS_stateFlags & StateFlags::INTERNAL_FLAGS;
+        To.TS_lastComputationEvent = (cl::Event &&) From.TS_lastComputationEvent; //Will serve as deletion of the previous event
+
+        To.data->TS_holder = &To;
+    }
+}
+
+//void DNN::Matrix::copy(const DNN::Matrix &From, DNN::Matrix &To, bool buffer, bool vector, bool ignoreReadings) {
+//    assert(From.getRowCount() == To.getRowCount() && From.getColumnCount() == To.getColumnCount());
+//    if(&From == &To || To.data == From.data || !From.isValid()) return;
+//
+//    if(data != nullptr) data->registerForDeletion();  //We keep the same internal representation of the matrix
+//    data = new BufferLinkManager(this);
+//    TS_stateFlags = StateFlags::NO_FLAG;
+//    TS_lastComputationEvent = (cl_event) nullptr; //Here the previous cl_event will be correctly released...
+//    TS_lastDownloadEvent    = (cl_event) nullptr;
+//    TS_lastUploadEvent      = (cl_event) nullptr;
+//
+//    //Basic preparation of the movement : keeps same internal representation
+//    To.transpose = From.transpose;
+//    To.rows = From.rows;
+//    To.columns = From.columns;
+//    To.setCLSetup(From.CLSetup);
+//
+//    //Effective smart copy... (never copy both, if such a behaviour is wanted the user should use the static copy function)
+//    From.promptStateMutex.lock();
+//    const bool originBuffer = From.TS_stateFlags & StateFlags::INT_DOWNLOAD_FLAGS;
+//    const bool originVector = From.TS_stateFlags & StateFlags::DATA_UPLOADED;
+//    const bool destinationBuffer = To.data->TS_buffer != nullptr;
+//    const bool destinationVector = To.data->TS_vector != nullptr;
+//    if(From.TS_stateFlags & StateFlags::DATA_UPLOADED) {
+//        toCopy.promptStateMutex.unlock(); //Using TS_vector is safe...
+//
+//        data->TS_vector = new cl::vector<float>(*toCopy.data->TS_vector);
+//        TS_stateFlags |= StateFlags::DATA_UPLOADED;
+//    }
+//    else if (toCopy.TS_stateFlags & StateFlags::DATA_DOWNLOADED) {
+//        toCopy.promptStateMutex.unlock();
+//
+//        /// Mimic computation from now...
+//
+//        cl::vector<cl::Event> events;
+//        events.reserve(1);
+//        toCopy.manageBeforeReading();
+//        data->addBufferEvent();
+//
+//        toCopy.manageBeforeComputation(events); //WARNING : It locks the promptMutex !!!!
+//        manageBeforeComputation(events, true); // ENH : In this context it is mainly useless...
+//
+//        data->TS_buffer =  new cl::Buffer (CLSetup->getContext(), CL_MEM_READ_WRITE, sizeof(float)*rows*columns);
+//        TS_stateFlags |= StateFlags::COMPUTATION_EXECUTING | StateFlags::DATA_DOWNLOADED;
+//
+//        CLSetup->getQueue().enqueueCopyBuffer(
+//                *toCopy.data->TS_buffer, *data->TS_buffer,
+//                0, 0, sizeof(float)*rows*columns,
+//                &events, &TS_lastComputationEvent
+//        );
+//
+//        //Callbacks
+//        addDataCallbackTo(TS_lastComputationEvent, readCallback, toCopy.data);
+//        addDataCallbackTo(TS_lastComputationEvent, computationCallback, data);
+//
+//        toCopy.promptStateMutex.unlock();
+//        promptStateMutex.unlock();
+//    }
+//    else assert(false); //Invalid state
+//
+//    return *this;
+//}
 
 std::ostream &DNN::operator<<(std::ostream &output, DNN::Matrix &matrix) {
     const char fill = output.fill();

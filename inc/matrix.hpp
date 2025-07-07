@@ -30,6 +30,7 @@ namespace DNN {
         typedef cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &> AddKerType;
         typedef cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &> SubKerType;
         typedef cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &, int> ProdKerType;
+        typedef cl::KernelFunctor<cl::Buffer &, cl::Buffer &, cl::Buffer &> PerKerType;
 
         static std::shared_ptr<CLMatrixSetup> getDefault();
 
@@ -99,6 +100,7 @@ namespace DNN {
         mutable std::recursive_mutex internalLinkMutex;
 
         friend class Matrix;
+        friend class SquareMatrix;
         friend class Vector;
     };
 
@@ -120,6 +122,9 @@ namespace DNN {
         Matrix &operator=(const Matrix &toCopy);
         Matrix &operator=(Matrix &&toMove) noexcept;
 
+        //static void copy(const Matrix &From, Matrix &To, bool buffer, bool vector, bool ignoreReadings = false);
+        static void move(Matrix &&From, Matrix &To, bool forceNonBlocking = false);
+
         //Operations' public library (we don't want them to be virtual : adapted return type)
         Matrix operator+(const Matrix &operand) const; //ENH : Add rvalue version ?
         Matrix operator-(const Matrix &operand) const;
@@ -139,7 +144,7 @@ namespace DNN {
         virtual inline int  getRowCount()    const {return transpose ? columns : rows; }
         virtual inline int  getColumnCount() const {return transpose ? rows : columns; }
         virtual inline bool getTranspose()   const { return transpose; }
-        virtual inline std::shared_ptr<CLMatrixSetup> getCLSetup() { return CLSetup; }
+        virtual inline std::shared_ptr<CLMatrixSetup> getCLSetup() const { return CLSetup; }
 
         inline RowAccesser operator[](cl::size_type row) { return RowAccesser(row, *this); }
         float &getLValueElement(cl::size_type row, cl::size_type col);
@@ -285,7 +290,6 @@ namespace DNN {
         R.columns        = columns;
 
         //Actual computations...
-        std::lock_guard<std::recursive_mutex> lockRes(R.promptStateMutex);
         cl::CommandQueue queue = A.CLSetup->getQueue();
         R.TS_lastComputationEvent = kernel( //Here the previous cl_event will be correctly released...
             cl::EnqueueArgs(queue, events, cl::NDRange(R.rows, R.columns)),
@@ -322,7 +326,6 @@ namespace DNN {
         R.columns   = columns;
 
         //Actual computations...
-        std::lock_guard<std::recursive_mutex> lockRes(R.promptStateMutex);
         cl::CommandQueue queue = A.CLSetup->getQueue();
         R.TS_lastComputationEvent = kernel( //Here the previous cl_event will be correctly released...
             cl::EnqueueArgs(queue, events, cl::NDRange(R.rows, R.columns)),

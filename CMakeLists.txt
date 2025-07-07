@@ -4,6 +4,7 @@ project(OpenCLTest)
 set(CMAKE_CXX_STANDARD 14)
 
 include_directories(inc)
+unset(OpenCL_DIR CACHE)
 find_package(OpenCL PATHS "$ENV{OpenCLDir}" NO_DEFAULT_PATH CONFIG REQUIRED)
 
 add_executable(OpenCLTest
@@ -17,11 +18,9 @@ add_executable(OpenCLTest
     src/square_matrix.cpp
     src/vector.cpp)
 
-add_compile_options(/EHsc)
-
 target_link_libraries(OpenCLTest OpenCL::OpenCL)
 target_link_libraries(OpenCLTest OpenCL::UtilsCpp)
 target_compile_definitions(OpenCLTest
-    PRIVATE
+    PUBLIC
         CL_HPP_ENABLE_EXCEPTIONS
         CL_HPP_TARGET_OPENCL_VERSION=210)
