@@ -11,8 +11,6 @@ namespace DNN {
 
         SquareMatrix(const SquareMatrix  &toCopy) : Matrix(toCopy) {}
         SquareMatrix(SquareMatrix &&toMove) noexcept : Matrix((Matrix &&) toMove) {}
-        SquareMatrix(const Matrix  &toCopy);
-        SquareMatrix(Matrix &&toMove) noexcept;
         virtual ~SquareMatrix() = default;
 
         SquareMatrix &operator=(const SquareMatrix  &toCopy)           { return *this = (Matrix  &) toCopy; }
@@ -65,14 +63,6 @@ namespace DNN {
         SquareMatrix::buildCLSetup();
     }
     inline SquareMatrix::SquareMatrix(const cl::vector<cl::vector<float>> &initializer, bool transposed, std::shared_ptr<CLMatrixSetup> setup) : Matrix(initializer, setup){
-        SquareMatrix::buildCLSetup();
-    }
-    inline SquareMatrix::SquareMatrix(const Matrix &toCopy) : Matrix(toCopy) {
-        assert(getColumnCount() == getRowCount());
-        SquareMatrix::buildCLSetup();
-    }
-    inline SquareMatrix::SquareMatrix(Matrix &&toMove) noexcept : Matrix(toMove) {
-        assert(getColumnCount() == getRowCount());
         SquareMatrix::buildCLSetup();
     }
 

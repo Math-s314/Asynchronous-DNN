@@ -13,9 +13,7 @@ namespace DNN {
 
         Vector(const Vector  &toCopy) : Matrix(toCopy) {}
         Vector(Vector &&toMove) noexcept : Matrix((Matrix &&) toMove) {}
-        Vector(const Matrix  &toCopy);
-        Vector(Matrix &&toMove) noexcept;
-        virtual ~Vector() = default;
+        ~Vector() override = default;
 
         Vector &operator=(const Vector  &toCopy)           { return *this = (Matrix  &) toCopy; }
         Vector &operator=(Vector       &&toMove) noexcept  { return *this = (Matrix &&) toMove; }
@@ -41,7 +39,7 @@ namespace DNN {
 
     protected:
         //Calculation management
-        static constexpr uint8_t libCode = 1 << 1;
+        static constexpr uint8_t libCode = 1 << 3;
         static constexpr char libFile[] = "ocl/vector.ocl";
         virtual void buildCLSetup() override;
     };
@@ -54,6 +52,9 @@ namespace DNN {
     Vector operator*(const Vector &A, const Vector &B);
     Vector operator*(const Matrix &A, const Vector &X);
     Vector operator-(const Vector &A);
+
+    // Functions
+    Vector hadamardProduct(const Vector &A, const Vector &B);
 
 
     /// Inline Definitions
@@ -68,14 +69,6 @@ namespace DNN {
         Vector::buildCLSetup();
     }
     inline Vector::Vector(cl::vector<float> &&initializer, std::shared_ptr<CLMatrixSetup> setup) : Matrix(initializer.size(), 1, new cl::vector<float>((cl::vector<float> &&) initializer), setup) {
-        Vector::buildCLSetup();
-    }
-    inline Vector::Vector(const Matrix &toCopy) : Matrix(toCopy) {
-        assert(getColumnCount() == 1);
-        Vector::buildCLSetup();
-    }
-    inline Vector::Vector(Matrix &&toMove) noexcept : Matrix((Matrix &&) toMove) {
-        assert(getColumnCount() == 1);
         Vector::buildCLSetup();
     }
 

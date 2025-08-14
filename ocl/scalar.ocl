@@ -1,0 +1,39 @@
+kernel void scalar_additionOM(global float *x, global float *A, global float *R) {
+  const int N = get_global_size(1);
+  const int i = get_global_id(0);
+  const int j = get_global_id(1);
+
+  R[i*N+j] = A[i*N+j] + *x;
+}
+
+kernel void scalar_subtractionOM(global float *x, global float *A, global float *R) {
+  const int N = get_global_size(1);
+  const int i = get_global_id(0);
+  const int j = get_global_id(1);
+
+  R[i*N+j] = A[i*N+j] - *x;
+}
+
+kernel void scalar_multiplicationOM(global float *x, global float *A, global float *R) {
+  const int N = get_global_size(1);
+  const int i = get_global_id(0);
+  const int j = get_global_id(1);
+
+  R[i*N+j] = A[i*N+j] * *x;
+}
+
+kernel void scalar_divisionOM(global float *x, global float *A, global float *R) {
+  const int N = get_global_size(1);
+  const int i = get_global_id(0);
+  const int j = get_global_id(1);
+
+  R[i*N+j] = A[i*N+j] / *x;
+}
+
+kernel void scalar_division(global float *x, global float *y, global float *z) {
+    *z = *x/(*y);
+}
+
+kernel void scalar_inversion(global float *x, global float *z) {
+    *z = 1/(*x);
+}

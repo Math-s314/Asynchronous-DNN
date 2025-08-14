@@ -17,6 +17,8 @@ add_executable(OpenCLTest
     src/vector.cpp
     inc/base.hpp
     src/base.cpp
+    src/scalar.cpp
+    inc/scalar.hpp
 )
 
 target_link_libraries(OpenCLTest OpenCL::OpenCL)

@@ -412,7 +412,7 @@ void DNN::BaseMatrix::uploadData() const {
     }
     unlock();
 
-    //Data control (promptStateMutex must be unlocked)
+    //Data control
     if(data->TS_vector == nullptr) //Create buffer if no buffer exist for now
         data->TS_vector = new cl::vector<float>(rows*columns);
 
