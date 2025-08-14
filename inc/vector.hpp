@@ -3,60 +3,95 @@
 #include "matrix.hpp"
 
 namespace DNN {
-    //This class does not guaranty that transpose = false (it is an internal thing we do not care about)
     class Vector : public Matrix {
     public :
-        //Host side creation
-        Vector() = delete;
-        explicit Vector(int nbRow, float expr = 0.0, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
+        //Constructors
+        Vector(std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
+        Vector(int nbRow, float expr = 0.0, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
         Vector(const cl::vector<float> &initializer, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
         Vector(cl::vector<float> &&initializer, std::shared_ptr<CLMatrixSetup> setup = CLMatrixSetup::getDefault());
 
-        //Affectation creation (behaves smartly...)
-        Vector(const Vector  &toCopy);
-        Vector(Vector &&toMove) noexcept;
+        Vector(const Vector  &toCopy) : Matrix(toCopy) {}
+        Vector(Vector &&toMove) noexcept : Matrix((Matrix &&) toMove) {}
         Vector(const Matrix  &toCopy);
         Vector(Matrix &&toMove) noexcept;
         virtual ~Vector() = default;
-        
-        //Affectation operators
-        inline Vector &operator=(const Vector  &toCopy)           { return *this = (Matrix  &) toCopy; }
-        inline Vector &operator=(Vector       &&toMove) noexcept  { return *this = (Matrix &&) toMove; }
-        inline Vector &operator=(const Matrix  &toCopy)           { this->Matrix::operator=((Matrix  &) toCopy); return *this; }
-        inline Vector &operator=(Matrix       &&toMove) noexcept  { this->Matrix::operator=((Matrix &&) toMove); return *this; }
 
-        //Public operations' library
-        Vector operator+(const Vector &operand) const;
-        Vector operator-(const Vector &operand) const;
-        Vector operator-()const;
+        Vector &operator=(const Vector  &toCopy)           { return *this = (Matrix  &) toCopy; }
+        Vector &operator=(Vector       &&toMove) noexcept  { return *this = (Matrix &&) toMove; }
+        Vector &operator=(const Matrix  &toCopy)           { this->Matrix::operator=((Matrix  &) toCopy); return *this; }
+        Vector &operator=(Matrix       &&toMove) noexcept  { this->Matrix::operator=((Matrix &&) toMove); return *this; }
 
-        Vector hadamardProduct(const Vector &operand) const;
-        Vector executeKernel(cl::KernelFunctor<cl::Buffer &, cl::Buffer &> kernel) const;
+        // Data Access
+        float &operator[](cl::size_type row) { return getLValueElement(row); }
+        float &getLValueElement(cl::size_type row)       {return Matrix::getLValueElement(row, 0); }
+        float  getRValueElement(cl::size_type row) const {return Matrix::getRValueElement(row, 0); }
 
-        Matrix addOverMatrix(const Matrix &operand) const;
-        Matrix subOverMatrix(const Matrix &operand) const;
+        /// Operations' library
 
-        //Data access
-        inline float &operator[](cl::size_type row) { return getLValueElement(row); }
-        inline float &getLValueElement(cl::size_type row)       {return Matrix::getLValueElement(row, 0); }
-        inline float  getRValueElement(cl::size_type row) const {return Matrix::getRValueElement(row, 0); }
+        //In-place operations
+        Vector &neg_IP() { return static_cast<Vector &>(Matrix::neg_IP()); }
+        Vector &hadamardProd_IP(const Vector &operand) { return static_cast<Vector &>(Matrix::hadamardProd_IP(operand)); }
+        Vector &operator+=(const Vector &operand) { return static_cast<Vector &>(Matrix::operator+=(operand)); }
+        Vector &operator-=(const Vector &operand) { return static_cast<Vector &>(Matrix::operator-=(operand)); }
+
+        //Internal versions (avoiding copies)
+        static void _addOver(const Vector &A, const Matrix &B, Matrix &R);
+        static void _subOver(const Vector &A, const Matrix &B, Matrix &R);
 
     protected:
-        Vector(int nbRow, cl::Buffer *existingBuffer       , std::shared_ptr<CLMatrixSetup> setup);  //Internal device side creation
-        Vector(int nbRow, cl::vector<float> *existingVector, std::shared_ptr<CLMatrixSetup> setup);  //Internal host side creation (for derived classes)
-
         //Calculation management
         static constexpr uint8_t libCode = 1 << 1;
         static constexpr char libFile[] = "ocl/vector.ocl";
-        virtual void setCLSetup(std::shared_ptr<CLMatrixSetup> newSetup) override;
-
-        //Operations' library (to allow any derived type as return without copy)
-        static void opAOM(const Vector &A, const Matrix &B, Matrix &R);
-        static void opSOM(const Vector &A, const Matrix &B, Matrix &R);
-
-        friend Vector operator*(Matrix &AL, Vector &X);
+        virtual void buildCLSetup() override;
     };
 
-    //Other DNN operators
-    Vector operator*(const Matrix &AL, const Vector &X);
+    /// Operators
+
+    // Arithmetic symbols
+    Vector operator+(const Vector &A, const Vector &B);
+    Vector operator-(const Vector &A, const Vector &B);
+    Vector operator*(const Vector &A, const Vector &B);
+    Vector operator*(const Matrix &A, const Vector &X);
+    Vector operator-(const Vector &A);
+
+
+    /// Inline Definitions
+
+    inline Vector::Vector(std::shared_ptr<CLMatrixSetup> setup) : Matrix(setup) {
+        Vector::buildCLSetup();
+    }
+    inline Vector::Vector(int nbRow, float expr, std::shared_ptr<CLMatrixSetup> setup) : Matrix(nbRow, 1, expr, setup) {
+        Vector::buildCLSetup();
+    }
+    inline Vector::Vector(const cl::vector<float> &initializer, std::shared_ptr<CLMatrixSetup> setup) : Matrix(initializer.size(), 1, new cl::vector<float>(initializer), setup) {
+        Vector::buildCLSetup();
+    }
+    inline Vector::Vector(cl::vector<float> &&initializer, std::shared_ptr<CLMatrixSetup> setup) : Matrix(initializer.size(), 1, new cl::vector<float>((cl::vector<float> &&) initializer), setup) {
+        Vector::buildCLSetup();
+    }
+    inline Vector::Vector(const Matrix &toCopy) : Matrix(toCopy) {
+        assert(getColumnCount() == 1);
+        Vector::buildCLSetup();
+    }
+    inline Vector::Vector(Matrix &&toMove) noexcept : Matrix((Matrix &&) toMove) {
+        assert(getColumnCount() == 1);
+        Vector::buildCLSetup();
+    }
+
+    inline Vector operator+(const Vector &A, const Vector &B) {
+        return static_cast<Vector>((Matrix &) A + (Matrix &) B);
+    }
+    inline Vector operator-(const Vector &A, const Vector &B) {
+        return static_cast<Vector>((Matrix &) A - (Matrix &) B);
+    }
+    inline Vector operator*(const Vector &A, const Vector &B) {
+        return static_cast<Vector>((Matrix &) A * (Matrix &) B);
+    }
+    inline Vector operator*(const Matrix &A, const Vector &X) {
+        return static_cast<Vector>(A * (Matrix &) X);
+    }
+    inline Vector operator-(const Vector &A) {
+        return static_cast<Vector>(-(Matrix &) A);
+    }
 }
