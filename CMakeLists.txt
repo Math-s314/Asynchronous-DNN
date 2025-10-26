@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.30)
-project(OpenCLTest)
+project(AsyncLinearAlgebra)
 
 set(CMAKE_CXX_STANDARD 17)
 
@@ -7,7 +7,7 @@ include_directories(inc)
 unset(OpenCL_DIR CACHE)
 find_package(OpenCL PATHS "$ENV{OpenCLDir}" NO_DEFAULT_PATH CONFIG REQUIRED)
 
-add_executable(OpenCLTest
+add_executable(AsyncLinearAlgebra
     inc/matrix.hpp
     inc/square_matrix.hpp
     inc/vector.hpp
@@ -21,9 +21,9 @@ add_executable(OpenCLTest
     inc/scalar.hpp
 )
 
-target_link_libraries(OpenCLTest OpenCL::OpenCL)
-target_link_libraries(OpenCLTest OpenCL::UtilsCpp)
-target_compile_definitions(OpenCLTest
+target_link_libraries(AsyncLinearAlgebra OpenCL::OpenCL)
+target_link_libraries(AsyncLinearAlgebra OpenCL::UtilsCpp)
+target_compile_definitions(AsyncLinearAlgebra
     PUBLIC
         CL_HPP_ENABLE_EXCEPTIONS
         CL_HPP_TARGET_OPENCL_VERSION=210)
